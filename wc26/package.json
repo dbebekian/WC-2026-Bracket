@@ -1,0 +1,9 @@
+{
+  "name": "wc26-pool",
+  "private": true,
+  "type": "module",
+  "description": "World Cup 2026 per-round prediction pool — Netlify Functions + Blobs + ESPN auto-results",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}
