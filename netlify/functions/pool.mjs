@@ -1,7 +1,8 @@
 // /api/pool — pool storage on Netlify Blobs.
 // GET            → { players:[{name,picks,updatedAt}], overrides }
 // POST save      → { action:"save", name, picks }
-// POST override  → { action:"override", code, overrides }   (commissioner)
+// POST rename    → { action:"rename", code, from, to }       (commissioner)
+// POST override  → { action:"override", code, overrides }    (commissioner)
 //
 // Optional: set a COMMISH_CODE env var in Netlify to require a passcode for overrides.
 
@@ -35,6 +36,25 @@ export default async (req) => {
       await store.setJSON("picks/" + slug(name), {
         name, picks, updatedAt: new Date().toISOString()
       });
+      return json({ ok: true });
+    }
+
+    if (body.action === "rename") {
+      const code = process.env.COMMISH_CODE;
+      if (code && String(body.code || "") !== code) return json({ error: "wrong passcode" }, 403);
+      const from = String(body.from || "").trim();
+      const to = String(body.to || "").trim().slice(0, 40);
+      if (!from || !to) return json({ error: "from and to required" }, 400);
+      const fromKey = "picks/" + slug(from);
+      const toKey = "picks/" + slug(to);
+      const cur = await store.get(fromKey, { type: "json" });
+      if (!cur) return json({ error: "player not found" }, 404);
+      if (fromKey !== toKey) {
+        const existing = await store.get(toKey, { type: "json" });
+        if (existing && existing.name) return json({ error: "name already taken" }, 409);
+      }
+      await store.setJSON(toKey, { ...cur, name: to }); // keep picks + original updatedAt
+      if (fromKey !== toKey) await store.delete(fromKey);
       return json({ ok: true });
     }
 

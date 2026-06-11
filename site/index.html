@@ -105,6 +105,7 @@
   .toast.err{background:var(--red);color:#fff}
   .empty{text-align:center;color:var(--muted);padding:52px 20px;font-size:14px}
   .empty .big{font-family:var(--disp);font-weight:700;font-size:20px;color:var(--text);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+  .empty .lockbig{font-size:34px;line-height:1;margin-bottom:10px;opacity:.85}
   .gate{max-width:420px;margin:9vh auto 0;padding:30px 24px;background:var(--surface);border:1px solid var(--line);border-radius:20px}
   .gate h1{font-family:var(--disp);font-weight:800;text-transform:uppercase;letter-spacing:.03em;font-size:30px;margin:0 0 4px}
   .gate h1 span{color:var(--pitch)}
@@ -122,6 +123,8 @@
     background:var(--surface2);color:var(--text);border-radius:8px;padding:7px 11px;cursor:pointer}
   .mini.on{background:var(--pitch);color:var(--ink);border-color:var(--pitch)}
   .mini.gold{background:var(--gold);color:var(--ink);border-color:var(--gold)}
+  .pname{flex:1;min-width:140px;background:var(--ink);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:9px 11px;font-size:15px;font-family:var(--body)}
+  .pname:focus{outline:none;border-color:var(--pitch)}
   .status-tag{font-size:11px;font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:6px}
   .st-open{color:var(--pitch);border:1px solid var(--pitch-dim)}
   .st-locked{color:var(--gold);border:1px solid var(--gold)}
@@ -353,7 +356,7 @@ function esc(s){return (s+"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":
 function roundStatus(rk){
   if(rk==="group") return Date.now()<GROUP_LOCK.getTime()?"open":"locked";
   const ms=state.rounds[rk];
-  if(!ms.length) return "soon";
+  if(!ms.length) return "locked"; // round not open until ESPN sets its fixtures
   return ms.some(m=>Date.now()<m.kickoff.getTime())?"open":"locked";
 }
 
@@ -397,8 +400,9 @@ function renderPick(v){
   }else{
     const ms=state.rounds[state.viewRound];
     if(!ms.length){
-      body=`<div class="empty"><div class="big">Fixtures not set yet</div>
-        As soon as the previous round wraps, ESPN publishes these matchups and they'll appear here automatically.</div>`;
+      const when=state.viewRound==="r32"?"after the group stage finishes (around Jun 28)":"once the previous round wraps";
+      body=`<div class="empty"><div class="lockbig">🔒</div><div class="big">${rmeta.name} locked</div>
+        Picks open automatically ${when}, as soon as ESPN sets the bracket. Each pick then locks at its own kickoff.</div>`;
     }else{
       body=ms.map(m=>{const editable=Date.now()<m.kickoff.getTime()&&!matchWinner(state.viewRound,m);
         if(editable)anyEditable=true; return matchCard(m,editable);}).join("");
@@ -607,11 +611,22 @@ function renderCommish(v){
       }).join("")+`</div>`;
   }
 
+  let pl=`<div class="cbox"><h3>Players</h3>
+    <p class="sub">Edit a player's name — e.g. add a last name to someone who only entered a first name. Renaming moves their picks and score to the new name.</p>`;
+  if(!state.players.length){
+    pl+=`<p class="sub" style="margin:0">No players have joined yet.</p>`;
+  }else{
+    pl+=state.players.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>
+      `<div class="crow nmrow"><input class="pname" type="text" value="${esc(p.name)}" autocomplete="off">
+        <button class="mini gold renameBtn" data-from="${esc(p.name)}">Rename</button></div>`).join("");
+  }
+  pl+=`</div>`;
+
   v.innerHTML=`<div class="roundbar" style="padding-top:18px"></div>
     <div class="banner"><div><h2>Commissioner</h2><p>Everything is automatic — this tab is your manual override</p></div></div>
     <div class="cbox"><div class="field"><label>Commish passcode (if set in Netlify)</label>
       <input type="password" id="ccode" value="${esc(localStorage.getItem("wc_code")||"")}" placeholder="optional"></div></div>
-    ${g}${k}
+    ${pl}${g}${k}
     <div class="cbox"><button class="btn gold" id="pushOv">Save overrides</button></div>`;
   clearSaveBar();
   v.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
@@ -636,6 +651,21 @@ function renderCommish(v){
       await refresh();toast("Overrides saved");
     }catch(e){toast("Override failed"+(String(e).includes("403")?" — wrong passcode":""),true);}
   };
+  v.querySelectorAll(".renameBtn").forEach(b=>b.onclick=async()=>{
+    const from=b.dataset.from;
+    const to=b.closest(".nmrow").querySelector(".pname").value.trim();
+    if(!to){toast("Enter a name",true);return;}
+    if(to===from){toast("Name unchanged");return;}
+    const code=$("#ccode").value;localStorage.setItem("wc_code",code);
+    b.disabled=true;
+    try{
+      const r=await fetch("/api/pool",{method:"POST",headers:{"content-type":"application/json"},
+        body:JSON.stringify({action:"rename",code,from,to})});
+      if(!r.ok)throw new Error(r.status);
+      await refresh();toast(`Renamed to ${to}`); // refresh() re-renders the Commish tab
+    }catch(e){b.disabled=false;const s=String(e);
+      toast(s.includes("403")?"Wrong passcode":s.includes("409")?"That name is already taken":s.includes("404")?"Player not found":"Rename failed",true);}
+  });
 }
 
 /* ---- save bar ---- */
@@ -653,8 +683,9 @@ function renderGate(){
   clearSaveBar();
   $("#app").innerHTML=`<div class="gate">
     <h1>World Cup Pool <span>'26</span></h1>
-    <p>Predict the World Cup one round at a time. Enter your name to join the pool.</p>
-    <div class="field"><label>Your name</label><input type="text" id="nm" placeholder="e.g. Daniel" autocomplete="off"></div>
+    <p>Predict the World Cup one round at a time. Enter your first and last name to join the pool.</p>
+    <div class="field"><label>First name</label><input type="text" id="fn" placeholder="e.g. Daniel" autocomplete="off"></div>
+    <div class="field" style="margin-top:12px"><label>Last name</label><input type="text" id="ln" placeholder="e.g. Bebekian" autocomplete="off"></div>
     <label class="check" style="display:flex;align-items:center;gap:10px;margin:18px 0 0;cursor:pointer;font-size:14px">
       <input type="checkbox" id="cm" style="width:18px;height:18px;accent-color:var(--gold)"> Show commissioner tools</label>
     <div class="field" id="cpwWrap" style="display:none;margin-top:12px"><label>Commissioner password</label>
@@ -663,7 +694,10 @@ function renderGate(){
   const cm=$("#cm"),cpwWrap=$("#cpwWrap");
   cm.onchange=()=>{cpwWrap.style.display=cm.checked?"block":"none";if(cm.checked)$("#cpw").focus();};
   const go=async()=>{
-    const name=$("#nm").value.trim();if(!name){$("#nm").focus();return;}
+    const fn=$("#fn").value.trim(),ln=$("#ln").value.trim();
+    if(!fn){$("#fn").focus();return;}
+    if(!ln){toast("Please enter your last name too",true);$("#ln").focus();return;}
+    const name=fn+" "+ln;
     let commish=false;
     if(cm.checked){
       if($("#cpw").value!==COMMISH_PW){toast("Wrong commissioner password",true);$("#cpw").focus();return;}
@@ -674,9 +708,8 @@ function renderGate(){
     await Promise.all([loadEspn(),loadPool()]);render();
   };
   $("#join").onclick=go;
-  $("#nm").addEventListener("keydown",e=>{if(e.key==="Enter")go();});
-  $("#cpw").addEventListener("keydown",e=>{if(e.key==="Enter")go();});
-  $("#nm").focus();
+  ["fn","ln","cpw"].forEach(id=>$("#"+id).addEventListener("keydown",e=>{if(e.key==="Enter")go();}));
+  $("#fn").focus();
 }
 
 /* ---- boot ---- */
