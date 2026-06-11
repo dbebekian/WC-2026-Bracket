@@ -510,12 +510,13 @@ function renderTable(v){
   clearSaveBar();
 }
 
-/* ---- player picks modal (read-only · hides unlocked picks) ---- */
-function playerPicksHtml(picks){
+/* ---- player picks modal (read-only) ----
+   reveal=true (commissioner) shows every pick regardless of lock state. */
+function playerPicksHtml(picks,reveal){
   let html="";
   /* group stage: all-or-nothing at the single group lock */
   let gBody;
-  if(roundStatus("group")!=="locked"){
+  if(!reveal && roundStatus("group")!=="locked"){
     gBody=`<div class="pp-hidden">Hidden until group picks lock</div>`;
   }else{
     gBody=Object.keys(GROUPS).map(L=>{
@@ -537,7 +538,7 @@ function playerPicksHtml(picks){
     const ms=state.rounds[R.key]; let body;
     if(!ms.length){ body=`<div class="pp-hidden">Fixtures not set yet</div>`; }
     else body=ms.map(m=>{
-      if(Date.now()<m.kickoff.getTime())
+      if(!reveal && Date.now()<m.kickoff.getTime())
         return `<div class="pp-match"><span class="pp-vs">${esc(m.a)} v ${esc(m.b)}</span><span class="pp-hidden-inline">Hidden until kickoff</span></div>`;
       const pk=(picks[R.key]||{})[m.id], w=matchWinner(R.key,m);
       let cls="pp-pick"; if(w&&pk) cls+=pk===w?" correct":" miss";
@@ -547,18 +548,19 @@ function playerPicksHtml(picks){
   }
   return html;
 }
-function openPlayerPicks(plslug){
+function openPlayerPicks(plslug,reveal){
   const isMe=plslug===state.me.slug;
   const p=state.players.find(x=>slug(x.name)===plslug);
   const name=isMe?state.me.name:(p&&p.name);
   if(!name) return;
   const picks=isMe?state.picks:(p.picks||{});
   closePlayerPicks();
+  const tag=reveal?' · all picks':isMe?' · you':'';
   const ov=document.createElement("div"); ov.className="pp-overlay"; ov.id="ppOverlay";
   ov.innerHTML=`<div class="pp-card">
-    <div class="pp-head"><h3>${esc(name)}${isMe?" · you":""}</h3>
+    <div class="pp-head"><h3>${esc(name)}${tag}</h3>
       <button class="pp-x" id="ppClose" aria-label="Close">✕</button></div>
-    <div class="pp-body">${playerPicksHtml(picks)}</div></div>`;
+    <div class="pp-body">${playerPicksHtml(picks,reveal)}</div></div>`;
   document.body.appendChild(ov);
   $("#ppClose").onclick=closePlayerPicks;
   ov.addEventListener("click",e=>{if(e.target===ov)closePlayerPicks();});
@@ -618,6 +620,7 @@ function renderCommish(v){
   }else{
     pl+=state.players.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>
       `<div class="crow nmrow"><input class="pname" type="text" value="${esc(p.name)}" autocomplete="off">
+        <button class="mini viewBtn" data-pl="${slug(p.name)}">View picks</button>
         <button class="mini gold renameBtn" data-from="${esc(p.name)}">Rename</button></div>`).join("");
   }
   pl+=`</div>`;
@@ -651,6 +654,7 @@ function renderCommish(v){
       await refresh();toast("Overrides saved");
     }catch(e){toast("Override failed"+(String(e).includes("403")?" — wrong passcode":""),true);}
   };
+  v.querySelectorAll(".viewBtn").forEach(b=>b.onclick=()=>openPlayerPicks(b.dataset.pl,true));
   v.querySelectorAll(".renameBtn").forEach(b=>b.onclick=async()=>{
     const from=b.dataset.from;
     const to=b.closest(".nmrow").querySelector(".pname").value.trim();
