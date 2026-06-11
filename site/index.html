@@ -574,7 +574,7 @@ function renderGate(){
   const go=async()=>{
     const name=$("#nm").value.trim();if(!name){$("#nm").focus();return;}
     state.me={name,slug:slug(name),commish:$("#cm").checked};
-    localStorage.setItem("wc_me",JSON.stringify(state.me));
+    state.picks={}; // hard-reset in-memory picks before loading this player's from server
     await Promise.all([loadEspn(),loadPool()]);render();
   };
   $("#join").onclick=go;
@@ -585,10 +585,10 @@ function renderGate(){
 /* ---- boot ---- */
 async function refresh(){await Promise.all([loadEspn(),loadPool()]);render();}
 (async function boot(){
-  const me=localStorage.getItem("wc_me");
-  if(me){try{state.me=JSON.parse(me);}catch(e){}}
-  if(state.me){await Promise.all([loadEspn(),loadPool()]);render();}
-  else renderGate();
+  /* No auto-login: identity is never persisted, so every visit starts at the
+     sign-in gate. Prevents a shared/previous session from hijacking the account. */
+  localStorage.removeItem("wc_me"); // clear identity persisted by older builds
+  renderGate();
 })();
 /* live refresh: every 60s, faster while a match window is on */
 setInterval(()=>{if(state.me)refresh();},60000);
