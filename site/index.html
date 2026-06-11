@@ -32,8 +32,8 @@
   .score .pts small{display:block;font-size:9px;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;text-align:right}
   @keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.28);color:#fff}100%{transform:scale(1)}}
   .pts.bump{animation:pop .5s ease}
-  nav.tabs{max-width:880px;margin:14px auto 0;display:flex;gap:6px;padding:0 16px}
-  .tab{flex:1;text-align:center;font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:14px;
+  nav.tabs{max-width:880px;margin:14px auto 0;display:flex;flex-wrap:wrap;gap:6px;padding:0 16px}
+  .tab{flex:1 1 auto;min-width:64px;white-space:nowrap;text-align:center;font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:14px;
     color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 6px;cursor:pointer;user-select:none;transition:.15s}
   .tab:hover{color:var(--text)} .tab.active{color:var(--ink);background:var(--pitch);border-color:var(--pitch)}
   .tab.commish.active{background:var(--gold);border-color:var(--gold)}
@@ -158,6 +158,39 @@
   .pp-pick{font-weight:600;flex:0 0 auto;text-align:right}
   .pp-pick.correct{color:var(--pitch)} .pp-pick.miss{color:var(--red)}
   .pp-hidden-inline{color:var(--muted);font-style:italic;flex:0 0 auto;font-size:12px}
+  /* World Cup 2026 — schedule */
+  .schday{margin-top:16px}
+  .schdate{font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:13px;color:var(--muted);padding:0 2px 7px}
+  .schrow{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:8px}
+  .schtop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
+  .schstage{font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.04em;font-size:11px;color:var(--muted);background:var(--surface2);border:1px solid var(--line);border-radius:5px;padding:2px 7px}
+  .schright{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .schscore{font-family:var(--disp);font-weight:800;font-size:17px;font-variant-numeric:tabular-nums}
+  .schstat{font-size:12px;color:var(--muted)}
+  .schstat.ft{color:var(--text);font-family:var(--disp);font-weight:700}
+  .schstat.live{color:var(--red);font-weight:700}
+  .schteams{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600}
+  .schteams .schv{color:var(--muted);font-weight:400;font-size:12px;flex:0 0 auto}
+  .schteams .nmL{flex:1;min-width:0;display:flex;align-items:center;gap:6px}
+  .schteams .nmR{flex:1;min-width:0;display:flex;align-items:center;gap:6px;justify-content:flex-end;text-align:right}
+  .schteams .win{color:var(--pitch)}
+  .schteams .ph{color:var(--muted);font-weight:500;font-size:13px}
+  /* World Cup 2026 — group tables */
+  .gtab{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 12px 6px}
+  .gth{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+  .gth .ttl{font-family:var(--disp);font-weight:800;text-transform:uppercase;letter-spacing:.04em;font-size:15px}
+  .gtbl{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+  .gtbl th{font-family:var(--disp);font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.03em;padding:4px 2px;text-align:center}
+  .gtbl td{padding:7px 2px;text-align:center;border-top:1px solid var(--line)}
+  .gtbl .tl{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0;width:99%}
+  .gtbl .tl .fl{font-size:15px}
+  .gtbl .pos{color:var(--muted);font-family:var(--disp);font-weight:700;width:20px}
+  .gtbl .pts{font-family:var(--disp);font-weight:800;color:var(--text)}
+  .gtbl tr.adv .pos{color:var(--pitch)}
+  .gtbl tr.adv .tl{box-shadow:inset 3px 0 0 var(--pitch);padding-left:7px}
+  .gtbl tr.third .pos{color:var(--gold)}
+  .gtbl tr.third .tl{box-shadow:inset 3px 0 0 var(--gold);padding-left:7px}
+  .gkey{text-align:center;margin:10px 0 0;color:var(--muted);font-size:12px}
 </style>
 </head>
 <body>
@@ -244,7 +277,10 @@ function bucket(d){
 let state={ me:null, picks:{}, players:[], overrides:{},
   groupsFinal:{},          // L -> [1st,2nd,3rd] when known
   rounds:{r32:[],r16:[],qf:[],sf:[],final:[]}, // [{id,a,b,kickoff,winner,live}]
-  tab:"pick", viewRound:"group", lastTotal:0, dataErr:null };
+  standings:[],            // [{L, rows:[{team,rank,gp,w,d,l,gf,ga,gd,pts}]}]
+  teamGroup:{},            // team -> group letter
+  fixtures:[],             // full tournament schedule (all 104 matches)
+  tab:"pick", viewRound:"group", wcSub:"schedule", lastTotal:0, dataErr:null };
 
 /* ================= api ================= */
 async function api(path,opts){ const r=await fetch(path,opts); if(!r.ok) throw new Error(path+" "+r.status); return r.json(); }
@@ -263,7 +299,7 @@ async function loadEspn(){
   /* standings → final group order */
   try{
     const s=await api("/api/espn?type=standings");
-    const groupsFinal={};
+    const groupsFinal={}, standings=[], teamGroup={};
     const kids=(s.children||s.groups||[]);
     for(const kid of kids){
       const label=(kid.name||kid.abbreviation||"").match(/Group\s+([A-L])/i);
@@ -274,38 +310,52 @@ async function loadEspn(){
       const rows=entries.map(en=>{
         const team=canonical(en.team&&(en.team.displayName||en.team.name));
         const stat=n=>{const x=(en.stats||[]).find(st=>st.name===n||st.type===n);return x?+x.value:null;};
-        return {team, rank:stat("rank")??99, gp:stat("gamesPlayed")??0};
+        teamGroup[team]=L;
+        return {team, rank:stat("rank")??99, gp:stat("gamesPlayed")??0,
+          w:stat("wins")??0, d:stat("ties")??0, l:stat("losses")??0,
+          gf:stat("pointsFor")??0, ga:stat("pointsAgainst")??0,
+          gd:stat("pointDifferential")??0, pts:stat("points")??0};
       });
-      const done=rows.every(r=>r.gp>=3);
-      if(done){ rows.sort((a,b)=>a.rank-b.rank); groupsFinal[L]=rows.slice(0,3).map(r=>r.team); }
+      rows.sort((a,b)=> a.rank-b.rank || b.pts-a.pts || b.gd-a.gd);
+      standings.push({L,rows});
+      if(rows.every(r=>r.gp>=3)) groupsFinal[L]=rows.slice(0,3).map(r=>r.team);
     }
-    state.groupsFinal=groupsFinal;
+    standings.sort((a,b)=>a.L.localeCompare(b.L));
+    state.groupsFinal=groupsFinal; state.standings=standings; state.teamGroup=teamGroup;
   }catch(e){ console.error("standings",e); state.dataErr="espn"; }
 
-  /* one scoreboard call for the whole knockout window → fixtures + winners */
+  /* one scoreboard call for the WHOLE tournament → knockout pick fixtures + full schedule */
   try{
-    const sb=await api("/api/espn?type=scoreboard&dates=20260627-20260720");
+    const sb=await api("/api/espn?type=scoreboard&dates=20260611-20260720");
     const rounds={r32:[],r16:[],qf:[],sf:[],final:[]};
+    const fixtures=[];
+    const num=s=>{const n=parseInt(s,10);return isNaN(n)?null:n;};
     for(const ev of (sb.events||[])){
-      const when=new Date(ev.date); const rk=bucket(when); if(!rk) continue;
+      const when=new Date(ev.date);
       const comp=(ev.competitions&&ev.competitions[0])||{};
       const cs=comp.competitors||[]; if(cs.length<2) continue;
       const home=cs.find(c=>c.homeAway==="home")||cs[0];
       const away=cs.find(c=>c.homeAway==="away")||cs[1];
-      const a=canonical(home.team&&(home.team.displayName||home.team.name));
-      const b=canonical(away.team&&(away.team.displayName||away.team.name));
-      if(/tbd|winner|runner|third/i.test(a+b)) continue; // placeholder fixtures not yet set
-      const completed=!!(comp.status&&comp.status.type&&comp.status.type.completed);
-      const live=!!(comp.status&&comp.status.type&&comp.status.type.state==="in");
+      const aRaw=(home.team&&(home.team.displayName||home.team.name))||"";
+      const bRaw=(away.team&&(away.team.displayName||away.team.name))||"";
+      const a=canonical(aRaw), b=canonical(bRaw);
+      const st=(comp.status&&comp.status.type)||{};
+      const stt=st.state||"pre";            // pre | in | post
+      const completed=!!st.completed, live=stt==="in";
+      const placeholder=/tbd|winner|runner|third|place|group/i.test(aRaw+" "+bRaw); // KO slot not set yet
       let winner=null;
-      if(completed){
-        const w=cs.find(c=>c.winner===true);
-        winner=w?canonical(w.team&&(w.team.displayName||w.team.name)):null;
-      }
-      rounds[rk].push({id:String(ev.id),a,b,kickoff:when,winner,live});
+      if(completed){const w=cs.find(c=>c.winner===true);winner=w?canonical((w.team&&(w.team.displayName||w.team.name)))||null:null;}
+      const rk=bucket(when);
+      fixtures.push({id:String(ev.id),when,a,b,aRaw,bRaw,
+        aScore:num(home.score),bScore:num(away.score),
+        state:stt,completed,live,winner,placeholder,
+        stage:rk?ROUNDS.find(r=>r.key===rk).name:(state.teamGroup[a]?"Group "+state.teamGroup[a]:"Group Stage"),
+        detail:st.shortDetail||""});
+      if(rk && !placeholder) rounds[rk].push({id:String(ev.id),a,b,kickoff:when,winner,live});
     }
     for(const k of KO) rounds[k].sort((x,y)=>x.kickoff-y.kickoff);
-    state.rounds=rounds;
+    fixtures.sort((x,y)=>x.when-y.when);
+    state.rounds=rounds; state.fixtures=fixtures;
   }catch(e){ console.error("scoreboard",e); state.dataErr="espn"; }
 }
 
@@ -372,6 +422,7 @@ function render(){
     <nav class="tabs">
       <div class="tab ${state.tab==='pick'?'active':''}" data-tab="pick">Pick</div>
       <div class="tab ${state.tab==='table'?'active':''}" data-tab="table">Table</div>
+      <div class="tab ${state.tab==='wc'?'active':''}" data-tab="wc">World Cup 2026</div>
       <div class="tab ${state.tab==='rules'?'active':''}" data-tab="rules">Rules</div>
       ${state.me.commish?`<div class="tab commish ${state.tab==='commish'?'active':''}" data-tab="commish">Commish</div>`:""}
     </nav>
@@ -382,6 +433,7 @@ function render(){
   document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{state.tab=t.dataset.tab;render();});
   const v=$("#view");
   if(state.tab==="pick")renderPick(v); else if(state.tab==="table")renderTable(v);
+  else if(state.tab==="wc")renderWC(v);
   else if(state.tab==="rules")renderRules(v); else renderCommish(v);
 }
 
@@ -566,6 +618,75 @@ function openPlayerPicks(plslug,reveal){
   ov.addEventListener("click",e=>{if(e.target===ov)closePlayerPicks();});
 }
 function closePlayerPicks(){const o=$("#ppOverlay");if(o)o.remove();}
+
+/* ---- World Cup 2026 : schedule + groups ---- */
+function renderWC(v){
+  const sub=state.wcSub;
+  const subbar=`<div class="roundbar" style="padding-top:18px">
+    <div class="pill ${sub==='schedule'?'active':''}" data-sub="schedule">Schedule</div>
+    <div class="pill ${sub==='groups'?'active':''}" data-sub="groups">Groups & Standings</div></div>`;
+  const body=sub==="groups"?groupsView():scheduleView();
+  const blurb=sub==="groups"
+    ?"Live group tables — top 2 advance, plus the 8 best 3rd-place teams"
+    :"Every fixture · kickoff times in your local timezone";
+  v.innerHTML=subbar+`
+    <div class="banner"><div><h2>World Cup 2026</h2><p>${blurb}</p></div>
+      <div class="val" id="wcRefresh" style="cursor:pointer">↻ Refresh</div></div>
+    ${state.dataErr==='espn'?'<div class="banner"><p class="live">Live data hiccup — showing last known state.</p></div>':''}
+    ${body}`;
+  v.querySelectorAll(".pill[data-sub]").forEach(p=>p.onclick=()=>{state.wcSub=p.dataset.sub;renderWC(v);});
+  $("#wcRefresh").onclick=async()=>{await refresh();toast("Refreshed");};
+  clearSaveBar();
+}
+function scheduleView(){
+  const fx=state.fixtures;
+  if(!fx.length) return `<div class="empty"><div class="big">Schedule unavailable</div>Couldn't load fixtures from ESPN just now — tap Refresh.</div>`;
+  const dayFmt=new Intl.DateTimeFormat(undefined,{weekday:"short",month:"short",day:"numeric"});
+  const days=[],idx={};
+  for(const m of fx){
+    const key=dayFmt.format(m.when);
+    if(idx[key]==null){idx[key]=days.length;days.push({key,items:[]});}
+    days[idx[key]].items.push(m);
+  }
+  return days.map(d=>`<div class="schday"><div class="schdate">${d.key}</div>`+
+    d.items.map(fixtureRow).join("")+`</div>`).join("");
+}
+function fixtureRow(m){
+  const t=m.when.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+  const side=(real,raw,ph,win)=>m.placeholder
+    ?`<span class="ph">${esc(raw)}</span>`
+    :`<span class="fl">${fl(real)}</span><span class="${win?'win':''}">${esc(real)}</span>`;
+  const aw=m.completed&&m.winner===m.a, bw=m.completed&&m.winner===m.b;
+  let right;
+  if(m.completed) right=`<span class="schscore">${m.aScore}–${m.bScore}</span><span class="schstat ft">FT</span>`;
+  else if(m.live) right=`<span class="schscore">${m.aScore??0}–${m.bScore??0}</span><span class="schstat live">● ${esc(m.detail||'Live')}</span>`;
+  else right=`<span class="schstat">${t}</span>`;
+  return `<div class="schrow">
+    <div class="schtop"><span class="schstage">${esc(m.stage)}</span><span class="schright">${right}</span></div>
+    <div class="schteams"><span class="nmL">${side(m.a,m.aRaw,m.placeholder,aw)}</span>
+      <span class="schv">v</span>
+      <span class="nmR">${side(m.b,m.bRaw,m.placeholder,bw)}</span></div></div>`;
+}
+function groupsView(){
+  const gs=state.standings;
+  if(!gs.length) return `<div class="empty"><div class="big">Standings not in yet</div>Group tables appear once the tournament data loads — tap Refresh.</div>`;
+  const liveTeams=new Set(state.fixtures.filter(m=>m.live).flatMap(m=>[m.a,m.b]));
+  const grid=`<div class="grid">`+gs.map(g=>{
+    const live=g.rows.some(r=>liveTeams.has(r.team));
+    const body=g.rows.map((r,i)=>{
+      const cls=i<2?"adv":i===2?"third":"out";
+      return `<tr class="${cls}"><td class="pos">${i+1}</td>
+        <td class="tl"><span class="fl">${fl(r.team)}</span> ${esc(r.team)}</td>
+        <td>${r.gp}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td>
+        <td>${r.gd>0?'+':''}${r.gd}</td><td class="pts">${r.pts}</td></tr>`;
+    }).join("");
+    return `<div class="gtab"><div class="gth"><span class="ttl">Group ${g.L}</span>
+        ${live?'<span class="schstat live">● Live</span>':''}</div>
+      <table class="gtbl"><thead><tr><th></th><th class="tl">Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
+      <tbody>${body}</tbody></table></div>`;
+  }).join("")+`</div>`;
+  return grid+`<p class="gkey"><b style="color:var(--pitch)">▍</b> Top 2 advance · <b style="color:var(--gold)">▍</b> 3rd place (8 of 12 advance)</p>`;
+}
 
 /* ---- rules ---- */
 function renderRules(v){
