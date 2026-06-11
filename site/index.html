@@ -127,6 +127,34 @@
   .st-locked{color:var(--gold);border:1px solid var(--gold)}
   .st-soon{color:var(--muted);border:1px solid var(--line)}
   .live{color:var(--red);font-weight:700}
+  /* player picks modal (read-only) */
+  .lrow[data-pl]{cursor:pointer;transition:background .12s}
+  .lrow[data-pl]:hover{background:rgba(255,255,255,.03)}
+  .pp-overlay{position:fixed;inset:0;z-index:50;background:rgba(7,11,20,.72);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center}
+  .pp-card{background:var(--surface);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:560px;max-height:88vh;display:flex;flex-direction:column;animation:ppUp .22s ease}
+  @keyframes ppUp{from{transform:translateY(24px);opacity:.5}to{transform:translateY(0);opacity:1}}
+  @media(min-width:560px){.pp-overlay{align-items:center}.pp-card{border-radius:18px}}
+  .pp-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
+  .pp-head h3{margin:0;font-family:var(--disp);font-weight:800;text-transform:uppercase;letter-spacing:.04em;font-size:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pp-x{background:var(--surface2);border:1px solid var(--line);color:var(--muted);border-radius:9px;width:32px;height:32px;cursor:pointer;font-size:14px;flex:0 0 auto}
+  .pp-body{overflow-y:auto;padding:6px 18px 26px}
+  .pp-round{margin-top:16px}
+  .pp-round h4{margin:0 0 8px;font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:13px;color:var(--pitch)}
+  .pp-hidden{color:var(--muted);font-size:13px;background:var(--surface2);border:1px dashed var(--line);border-radius:10px;padding:11px 14px}
+  .pp-grow{display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-top:1px solid var(--line)}
+  .pp-grow:first-child{border-top:none}
+  .pp-lbl{font-family:var(--disp);font-weight:700;font-size:13px;color:var(--muted);width:70px;flex:0 0 auto;padding-top:1px}
+  .pp-teams{display:flex;flex-direction:column;gap:3px}
+  .pp-team{font-size:13px}
+  .pp-team.empty{color:var(--muted)}
+  .pp-team.correct{color:var(--pitch)}
+  .pp-team.miss{color:var(--red)}
+  .pp-match{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+  .pp-match:first-child{border-top:none}
+  .pp-vs{color:var(--muted);flex:1;min-width:0}
+  .pp-pick{font-weight:600;flex:0 0 auto;text-align:right}
+  .pp-pick.correct{color:var(--pitch)} .pp-pick.miss{color:var(--red)}
+  .pp-hidden-inline{color:var(--muted);font-style:italic;flex:0 0 auto;font-size:12px}
 </style>
 </head>
 <body>
@@ -175,6 +203,9 @@ const KO=["r32","r16","qf","sf","final"];
 const GROUP_LOCK = new Date("2026-06-11T19:00:00Z"); // opener kickoff, 3pm ET
 const fl=t=>FLAGS[t]||"⚽";
 const ORD=["1st","2nd","3rd"];
+/* client-side gate for the Commish TAB only — cosmetic. Destructive overrides/
+   deletes are still gated server-side by COMMISH_CODE in pool.mjs. */
+const COMMISH_PW="commish";
 
 /* ESPN name → canonical name */
 const norm=s=>(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
@@ -461,18 +492,74 @@ function renderTable(v){
   if(!rows.length){v.innerHTML=`<div class="empty"><div class="big">No picks yet</div>Be the first — head to Pick.</div>`;clearSaveBar();return;}
   const top=rows[0].total;
   v.innerHTML=`<div class="roundbar" style="padding-top:18px"></div>
-    <div class="banner"><div><h2>Standings</h2><p>Auto-updates from live results · ${rows.length} player${rows.length>1?'s':''}</p></div>
+    <div class="banner"><div><h2>Standings</h2><p>Tap a player to see their picks · ${rows.length} player${rows.length>1?'s':''}</p></div>
       <div class="val" id="refreshBtn" style="cursor:pointer">↻ Refresh</div></div>
     <div class="lb">`+rows.map((r,i)=>{
       const isMe=r.slug===state.me.slug;
       const chips=ROUNDS.filter(R=>r.by[R.key]>0).map(R=>`<span class="chip">${R.name.split(" ")[0].slice(0,3).toUpperCase()} ${r.by[R.key]}</span>`).join("");
-      return `<div class="lrow ${i===0&&top>0?'leader':''} ${isMe?'me':''}">
+      return `<div class="lrow ${i===0&&top>0?'leader':''} ${isMe?'me':''}" data-pl="${r.slug}">
         <span class="rk">${i+1}</span><span class="nm">${esc(r.name)}${isMe?' · you':''}</span>
         <span class="br">${chips}</span><span class="tot">${r.total}</span></div>`;
     }).join("")+`</div>`;
   $("#refreshBtn").onclick=async()=>{await refresh();toast("Refreshed");};
+  v.querySelectorAll(".lrow[data-pl]").forEach(row=>row.onclick=()=>openPlayerPicks(row.dataset.pl));
   clearSaveBar();
 }
+
+/* ---- player picks modal (read-only · hides unlocked picks) ---- */
+function playerPicksHtml(picks){
+  let html="";
+  /* group stage: all-or-nothing at the single group lock */
+  let gBody;
+  if(roundStatus("group")!=="locked"){
+    gBody=`<div class="pp-hidden">Hidden until group picks lock</div>`;
+  }else{
+    gBody=Object.keys(GROUPS).map(L=>{
+      const sel=(picks.group&&picks.group[L])||[];
+      const actual=groupResult(L), resolved=actual.length>=3;
+      const teams=[0,1,2].map(pos=>{
+        const t=sel[pos];
+        if(!t) return `<span class="pp-team empty">${ORD[pos]} · —</span>`;
+        let cls="pp-team"; if(resolved) cls+=actual[pos]===t?" correct":" miss";
+        return `<span class="${cls}">${ORD[pos]} · ${fl(t)} ${esc(t)}</span>`;
+      }).join("");
+      return `<div class="pp-grow"><span class="pp-lbl">Group ${L}</span><div class="pp-teams">${teams}</div></div>`;
+    }).join("");
+  }
+  html+=`<div class="pp-round"><h4>Group Stage</h4>${gBody}</div>`;
+  /* knockouts: each match reveals at its own kickoff */
+  for(const R of ROUNDS){
+    if(R.key==="group") continue;
+    const ms=state.rounds[R.key]; let body;
+    if(!ms.length){ body=`<div class="pp-hidden">Fixtures not set yet</div>`; }
+    else body=ms.map(m=>{
+      if(Date.now()<m.kickoff.getTime())
+        return `<div class="pp-match"><span class="pp-vs">${esc(m.a)} v ${esc(m.b)}</span><span class="pp-hidden-inline">Hidden until kickoff</span></div>`;
+      const pk=(picks[R.key]||{})[m.id], w=matchWinner(R.key,m);
+      let cls="pp-pick"; if(w&&pk) cls+=pk===w?" correct":" miss";
+      return `<div class="pp-match"><span class="pp-vs">${esc(m.a)} v ${esc(m.b)}</span><span class="${cls}">${pk?fl(pk)+" "+esc(pk):"— no pick"}</span></div>`;
+    }).join("");
+    html+=`<div class="pp-round"><h4>${R.name}</h4>${body}</div>`;
+  }
+  return html;
+}
+function openPlayerPicks(plslug){
+  const isMe=plslug===state.me.slug;
+  const p=state.players.find(x=>slug(x.name)===plslug);
+  const name=isMe?state.me.name:(p&&p.name);
+  if(!name) return;
+  const picks=isMe?state.picks:(p.picks||{});
+  closePlayerPicks();
+  const ov=document.createElement("div"); ov.className="pp-overlay"; ov.id="ppOverlay";
+  ov.innerHTML=`<div class="pp-card">
+    <div class="pp-head"><h3>${esc(name)}${isMe?" · you":""}</h3>
+      <button class="pp-x" id="ppClose" aria-label="Close">✕</button></div>
+    <div class="pp-body">${playerPicksHtml(picks)}</div></div>`;
+  document.body.appendChild(ov);
+  $("#ppClose").onclick=closePlayerPicks;
+  ov.addEventListener("click",e=>{if(e.target===ov)closePlayerPicks();});
+}
+function closePlayerPicks(){const o=$("#ppOverlay");if(o)o.remove();}
 
 /* ---- rules ---- */
 function renderRules(v){
@@ -568,17 +655,27 @@ function renderGate(){
     <h1>World Cup Pool <span>'26</span></h1>
     <p>Predict the World Cup one round at a time. Enter your name to join the pool.</p>
     <div class="field"><label>Your name</label><input type="text" id="nm" placeholder="e.g. Daniel" autocomplete="off"></div>
-    <label class="check" style="display:flex;align-items:center;gap:10px;margin:18px 0 22px;cursor:pointer;font-size:14px">
+    <label class="check" style="display:flex;align-items:center;gap:10px;margin:18px 0 0;cursor:pointer;font-size:14px">
       <input type="checkbox" id="cm" style="width:18px;height:18px;accent-color:var(--gold)"> Show commissioner tools</label>
-    <button class="btn" id="join" style="width:100%">Join pool</button></div>`;
+    <div class="field" id="cpwWrap" style="display:none;margin-top:12px"><label>Commissioner password</label>
+      <input type="password" id="cpw" placeholder="enter passcode" autocomplete="off"></div>
+    <button class="btn" id="join" style="width:100%;margin-top:22px">Join pool</button></div>`;
+  const cm=$("#cm"),cpwWrap=$("#cpwWrap");
+  cm.onchange=()=>{cpwWrap.style.display=cm.checked?"block":"none";if(cm.checked)$("#cpw").focus();};
   const go=async()=>{
     const name=$("#nm").value.trim();if(!name){$("#nm").focus();return;}
-    state.me={name,slug:slug(name),commish:$("#cm").checked};
+    let commish=false;
+    if(cm.checked){
+      if($("#cpw").value!==COMMISH_PW){toast("Wrong commissioner password",true);$("#cpw").focus();return;}
+      commish=true;
+    }
+    state.me={name,slug:slug(name),commish};
     state.picks={}; // hard-reset in-memory picks before loading this player's from server
     await Promise.all([loadEspn(),loadPool()]);render();
   };
   $("#join").onclick=go;
   $("#nm").addEventListener("keydown",e=>{if(e.key==="Enter")go();});
+  $("#cpw").addEventListener("keydown",e=>{if(e.key==="Enter")go();});
   $("#nm").focus();
 }
 
