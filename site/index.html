@@ -59,6 +59,8 @@
   .team{display:flex;align-items:center;gap:11px;padding:11px 14px;cursor:pointer;border-top:1px solid rgba(39,52,79,.5);transition:background .12s}
   .team:first-of-type{border-top:none}
   .team .fl{font-size:20px;width:24px;text-align:center;flex:0 0 auto}
+  .flag{width:24px;height:18px;border-radius:3px;object-fit:cover;vertical-align:middle;display:inline-block;box-shadow:0 0 0 1px rgba(255,255,255,.1)}
+  .noflag{display:inline-flex;align-items:center;justify-content:center;font-size:13px;box-shadow:none}
   .team .nm{flex:1;font-size:14.5px;font-weight:500}
   .team .stamp{font-family:var(--disp);font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
     border:1px solid var(--line);border-radius:6px;padding:3px 7px;opacity:0}
@@ -213,19 +215,20 @@ const GROUPS = {
   K:["Portugal","Colombia","Uzbekistan","DR Congo"],
   L:["England","Croatia","Panama","Ghana"]
 };
-const FLAGS = {
-  "Mexico":"🇲🇽","South Korea":"🇰🇷","South Africa":"🇿🇦","Czechia":"🇨🇿",
-  "Canada":"🇨🇦","Switzerland":"🇨🇭","Qatar":"🇶🇦","Bosnia-Herzegovina":"🇧🇦",
-  "Brazil":"🇧🇷","Morocco":"🇲🇦","Scotland":"🏴󠁧󠁢󠁳󠁣󠁴󠁿","Haiti":"🇭🇹",
-  "USA":"🇺🇸","Paraguay":"🇵🇾","Australia":"🇦🇺","Türkiye":"🇹🇷",
-  "Germany":"🇩🇪","Ecuador":"🇪🇨","Ivory Coast":"🇨🇮","Curaçao":"🇨🇼",
-  "Netherlands":"🇳🇱","Japan":"🇯🇵","Tunisia":"🇹🇳","Sweden":"🇸🇪",
-  "Belgium":"🇧🇪","Iran":"🇮🇷","Egypt":"🇪🇬","New Zealand":"🇳🇿",
-  "Spain":"🇪🇸","Uruguay":"🇺🇾","Saudi Arabia":"🇸🇦","Cape Verde":"🇨🇻",
-  "France":"🇫🇷","Senegal":"🇸🇳","Norway":"🇳🇴","Iraq":"🇮🇶",
-  "Argentina":"🇦🇷","Austria":"🇦🇹","Algeria":"🇩🇿","Jordan":"🇯🇴",
-  "Portugal":"🇵🇹","Colombia":"🇨🇴","Uzbekistan":"🇺🇿","DR Congo":"🇨🇩",
-  "England":"🏴󠁧󠁢󠁥󠁮󠁧󠁿","Croatia":"🇭🇷","Panama":"🇵🇦","Ghana":"🇬🇭"
+/* team → ISO-3166 code for flag images (emoji flags don't render on Windows) */
+const CODES = {
+  "Mexico":"mx","South Korea":"kr","South Africa":"za","Czechia":"cz",
+  "Canada":"ca","Switzerland":"ch","Qatar":"qa","Bosnia-Herzegovina":"ba",
+  "Brazil":"br","Morocco":"ma","Scotland":"gb-sct","Haiti":"ht",
+  "USA":"us","Paraguay":"py","Australia":"au","Türkiye":"tr",
+  "Germany":"de","Ecuador":"ec","Ivory Coast":"ci","Curaçao":"cw",
+  "Netherlands":"nl","Japan":"jp","Tunisia":"tn","Sweden":"se",
+  "Belgium":"be","Iran":"ir","Egypt":"eg","New Zealand":"nz",
+  "Spain":"es","Uruguay":"uy","Saudi Arabia":"sa","Cape Verde":"cv",
+  "France":"fr","Senegal":"sn","Norway":"no","Iraq":"iq",
+  "Argentina":"ar","Austria":"at","Algeria":"dz","Jordan":"jo",
+  "Portugal":"pt","Colombia":"co","Uzbekistan":"uz","DR Congo":"cd",
+  "England":"gb-eng","Croatia":"hr","Panama":"pa","Ghana":"gh"
 };
 const ROUNDS = [
   {key:"group", name:"Group Stage",    pts:1, hint:"Pick 1st, 2nd, 3rd per group — exact position · locks Jun 11, 3pm ET"},
@@ -237,7 +240,9 @@ const ROUNDS = [
 ];
 const KO=["r32","r16","qf","sf","final"];
 const GROUP_LOCK = new Date("2026-06-11T19:00:00Z"); // opener kickoff, 3pm ET
-const fl=t=>FLAGS[t]||"⚽";
+const fl=t=>{const c=CODES[t];return c
+  ?`<img class="flag" src="https://flagcdn.com/24x18/${c}.png" srcset="https://flagcdn.com/48x36/${c}.png 2x" width="24" height="18" alt="" loading="lazy" decoding="async">`
+  :`<span class="flag noflag">⚽</span>`;};
 const ORD=["1st","2nd","3rd"];
 /* client-side gate for the Commish TAB only — cosmetic. Destructive overrides/
    deletes are still gated server-side by COMMISH_CODE in pool.mjs. */
