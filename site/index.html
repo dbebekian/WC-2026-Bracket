@@ -32,6 +32,8 @@
   .score .pts small{display:block;font-size:9px;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;text-align:right}
   @keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.28);color:#fff}100%{transform:scale(1)}}
   .pts.bump{animation:pop .5s ease}
+  @keyframes drop{0%{transform:scale(1)}40%{transform:scale(.82);color:var(--red)}100%{transform:scale(1)}}
+  .pts.dip{animation:drop .5s ease}
   nav.tabs{max-width:880px;margin:14px auto 0;display:flex;flex-wrap:wrap;gap:6px;padding:0 16px}
   .tab{flex:1 1 auto;min-width:64px;white-space:nowrap;text-align:center;font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:14px;
     color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 6px;cursor:pointer;user-select:none;transition:.15s}
@@ -244,6 +246,7 @@ const fl=t=>{const c=CODES[t];return c
   ?`<img class="flag" src="https://flagcdn.com/24x18/${c}.png" srcset="https://flagcdn.com/48x36/${c}.png 2x" width="24" height="18" alt="" loading="lazy" decoding="async">`
   :`<span class="flag noflag">⚽</span>`;};
 const ORD=["1st","2nd","3rd"];
+const ORD4=["1st","2nd","3rd","4th"];
 /* client-side gate for the Commish TAB only — cosmetic. Destructive overrides/
    deletes are still gated server-side by COMMISH_CODE in pool.mjs. */
 const COMMISH_PW="commish";
@@ -364,11 +367,23 @@ async function loadEspn(){
   }catch(e){ console.error("scoreboard",e); state.dataErr="espn"; }
 }
 
-/* overrides win over ESPN */
+/* overrides win over ESPN.
+   Group order is LIVE: it tracks the current standings table, so points
+   move up and down as group games finish and the table reorders. Returns the
+   full rank order (4 teams) once a group has kicked off, else []. */
 function groupResult(L){
   const ov=state.overrides.group&&state.overrides.group[L];
   if(ov&&ov.length>=3) return ov;
-  return state.groupsFinal[L]||[];
+  const g=state.standings.find(s=>s.L===L);
+  if(!g||!g.rows.some(r=>r.gp>0)) return []; // not started → nothing to score yet
+  return g.rows.map(r=>r.team);
+}
+/* a group is settled when every team has played 3 (or a commish override is set) */
+function groupDone(L){
+  const ov=state.overrides.group&&state.overrides.group[L];
+  if(ov&&ov.length>=3) return true;
+  const g=state.standings.find(s=>s.L===L);
+  return !!(g&&g.rows.length===4&&g.rows.every(r=>r.gp>=3));
 }
 function matchWinner(rk,m){
   const ov=state.overrides.results&&state.overrides.results[m.id];
@@ -434,6 +449,7 @@ function render(){
     <div class="wrap" id="view"></div>`;
   const ptsEl=$("#myPts");
   if(me.total>state.lastTotal){ptsEl.classList.add("bump");setTimeout(()=>ptsEl.classList.remove("bump"),500);}
+  else if(me.total<state.lastTotal){ptsEl.classList.add("dip");setTimeout(()=>ptsEl.classList.remove("dip"),500);}
   state.lastTotal=me.total;
   document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{state.tab=t.dataset.tab;render();});
   const v=$("#view");
@@ -482,22 +498,24 @@ function renderPick(v){
 function groupCard(L,editable){
   const teams=GROUPS[L];
   const sel=(state.picks.group&&state.picks.group[L])||[];
-  const actual=groupResult(L);
-  const resolved=actual.length>=3;
+  const actual=groupResult(L);     // live standings order (4 teams) once started
+  const scored=actual.length>=3;   // group has kicked off → live points apply
+  const done=groupDone(L);         // all games played → settled
   const rows=teams.map(t=>{
     let cls="team",stamp="";
     const myPos=sel.indexOf(t),realPos=actual.indexOf(t);
-    if(resolved){
+    if(scored){
       cls+=" ro";
       if(myPos>=0&&myPos===realPos){cls+=" correct";stamp="✓ "+ORD[myPos];}
-      else if(myPos>=0){cls+=" miss";stamp="✗ "+ORD[myPos]+(realPos>=0?" → "+ORD[realPos]:"");}
-      else if(realPos>=0){stamp=ORD[realPos];}
+      else if(myPos>=0){cls+=" miss";stamp="✗ "+ORD[myPos]+(realPos>=0?" → "+ORD4[realPos]:"");}
+      else if(realPos>=0){stamp=ORD4[realPos];}
     }else if(myPos>=0){cls+=" sel";stamp=ORD[myPos];}
-    return `<div class="${cls}" data-g="${L}" data-t="${esc(t)}" ${editable&&!resolved?'':'data-ro="1"'}>
+    return `<div class="${cls}" data-g="${L}" data-t="${esc(t)}" ${editable&&!scored?'':'data-ro="1"'}>
       <span class="fl">${fl(t)}</span><span class="nm">${esc(t)}</span><span class="stamp">${stamp||"Pick"}</span></div>`;
   }).join("");
+  const label=done?'final':scored?'<span class="live">● live</span>':editable?sel.length+"/3 placed":"locked";
   return `<div class="gcard"><div class="gh"><span class="gl">Group ${L}</span>
-    <span class="pick-n">${resolved?'final':editable?sel.length+"/3 placed":"locked"}</span></div>${rows}</div>`;
+    <span class="pick-n">${label}</span></div>${rows}</div>`;
 }
 
 function matchCard(m,editable){
@@ -553,7 +571,7 @@ function renderTable(v){
   if(!rows.length){v.innerHTML=`<div class="empty"><div class="big">No picks yet</div>Be the first — head to Pick.</div>`;clearSaveBar();return;}
   const top=rows[0].total;
   v.innerHTML=`<div class="roundbar" style="padding-top:18px"></div>
-    <div class="banner"><div><h2>Standings</h2><p>Tap a player to see their picks · ${rows.length} player${rows.length>1?'s':''}</p></div>
+    <div class="banner"><div><h2>Standings</h2><p>Updates live as results come in — scores rise and fall · tap a player to see their picks</p></div>
       <div class="val" id="refreshBtn" style="cursor:pointer">↻ Refresh</div></div>
     <div class="lb">`+rows.map((r,i)=>{
       const isMe=r.slug===state.me.slug;
@@ -718,12 +736,12 @@ function renderCommish(v){
     <p class="sub">Only needed if the live feed misbehaves. Tap in finishing order (1st → 2nd → 3rd). Overrides beat ESPN data.</p>`;
   g+=Object.keys(GROUPS).map(L=>{
     const cur=(ov.group&&ov.group[L])||[];
-    const live=state.groupsFinal[L];
+    const live=groupResult(L).slice(0,3); // current standings top-3 being scored
     const opts=GROUPS[L].map(t=>{
       const p=cur.indexOf(t);const tag=p>=0?["1·","2·","3·"][p]:"";
       return `<button class="mini ${p>=0?'on':''}" data-act="gres" data-g="${L}" data-t="${esc(t)}">${tag}${fl(t)} ${esc(t)}</button>`;
     }).join(" ");
-    return `<div class="crow"><span class="lbl">Group ${L} ${live?'<span class="status-tag st-open">live: '+live.map(x=>esc(x)).join(" · ")+'</span>':''}</span></div>
+    return `<div class="crow"><span class="lbl">Group ${L} ${live.length?'<span class="status-tag st-open">'+(groupDone(L)?'final':'live')+': '+live.map(x=>esc(x)).join(" · ")+'</span>':''}</span></div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;padding-bottom:8px">${opts}</div>`;
   }).join("")+`</div>`;
 
