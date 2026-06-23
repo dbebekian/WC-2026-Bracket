@@ -84,6 +84,15 @@
   .side.miss{border-color:var(--red);background:rgba(255,90,102,.12)}
   .side.ro{cursor:default}
   .vs .mid{font-family:var(--disp);font-weight:700;color:var(--muted);font-size:13px}
+  .side.empty{cursor:default;background:var(--surface);border-style:dashed;opacity:.85}
+  .side .slot{font-size:12px;color:var(--muted);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .side.right .slot{width:100%;text-align:right}
+  .match .mh .in{color:var(--pitch);font-weight:700}
+  .champ{display:flex;align-items:center;gap:8px;background:linear-gradient(90deg,rgba(245,185,46,.16),transparent);border:1px solid var(--line);border-radius:12px;padding:11px 14px;margin-bottom:12px;font-size:14px;color:var(--muted)}
+  .champ.set{color:var(--text)}
+  .champ b{display:inline-flex;align-items:center;gap:6px;color:var(--gold);font-family:var(--disp);font-weight:800;font-size:16px;letter-spacing:.02em}
+  .champ b .flag{width:22px;height:16px}
+  .pp-chips{display:flex;flex-wrap:wrap;gap:6px}
   .lb{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
   .lrow{display:flex;align-items:center;gap:12px;padding:13px 16px;border-top:1px solid var(--line)}
   .lrow:first-child{border-top:none}
@@ -232,13 +241,15 @@ const CODES = {
   "Portugal":"pt","Colombia":"co","Uzbekistan":"uz","DR Congo":"cd",
   "England":"gb-eng","Croatia":"hr","Panama":"pa","Ghana":"gh"
 };
+/* Knockout uses a fill-the-whole-bracket model (March Madness): doubling points
+   per correct pick. Each round's max is the same (16): 16×1, 8×2, 4×4, 2×8, 1×16. */
 const ROUNDS = [
-  {key:"group", name:"Group Stage",    pts:1, hint:"Pick 1st, 2nd, 3rd per group — exact position · locks Jun 11, 3pm ET"},
-  {key:"r32",   name:"Round of 32",    pts:1, hint:"Fixtures appear automatically after groups (Jun 28) · each pick locks at kickoff"},
-  {key:"r16",   name:"Round of 16",    pts:2, hint:"Jul 4–7 · each pick locks at kickoff"},
-  {key:"qf",    name:"Quarter-finals", pts:3, hint:"Jul 9–11 · each pick locks at kickoff"},
-  {key:"sf",    name:"Semi-finals",    pts:5, hint:"Jul 14–15 · each pick locks at kickoff"},
-  {key:"final", name:"Final",          pts:8, hint:"Jul 19 · MetLife Stadium · locks at kickoff"}
+  {key:"group", name:"Group Stage",    pts:1,  hint:"Pick 1st, 2nd, 3rd per group — exact position · live scoring"},
+  {key:"r32",   name:"Round of 32",    pts:1,  hint:"16 games · 1 pt each"},
+  {key:"r16",   name:"Round of 16",    pts:2,  hint:"8 games · 2 pts each"},
+  {key:"qf",    name:"Quarter-finals", pts:4,  hint:"4 games · 4 pts each"},
+  {key:"sf",    name:"Semi-finals",    pts:8,  hint:"2 games · 8 pts each"},
+  {key:"final", name:"Final",          pts:16, hint:"Champion · 16 pts"}
 ];
 const KO=["r32","r16","qf","sf","final"];
 const GROUP_LOCK = new Date("2026-06-11T19:00:00Z"); // opener kickoff, 3pm ET
@@ -284,7 +295,7 @@ function bucket(d){
 /* ================= state ================= */
 let state={ me:null, picks:{}, players:[], overrides:{},
   groupsFinal:{},          // L -> [1st,2nd,3rd] when known
-  rounds:{r32:[],r16:[],qf:[],sf:[],final:[]}, // [{id,a,b,kickoff,winner,live}]
+  bracket:{games:{},order:{r32:[],r16:[],qf:[],sf:[],final:[]},ready:false}, // KO tree
   standings:[],            // [{L, rows:[{team,rank,gp,w,d,l,gf,ga,gd,pts}]}]
   teamGroup:{},            // team -> group letter
   fixtures:[],             // full tournament schedule (all 104 matches)
@@ -332,11 +343,10 @@ async function loadEspn(){
     state.groupsFinal=groupsFinal; state.standings=standings; state.teamGroup=teamGroup;
   }catch(e){ console.error("standings",e); state.dataErr="espn"; }
 
-  /* one scoreboard call for the WHOLE tournament → knockout pick fixtures + full schedule */
+  /* one scoreboard call for the WHOLE tournament → bracket tree + full schedule */
   try{
     const sb=await api("/api/espn?type=scoreboard&dates=20260611-20260720");
-    const rounds={r32:[],r16:[],qf:[],sf:[],final:[]};
-    const fixtures=[];
+    const fixtures=[], ko=[];
     const num=s=>{const n=parseInt(s,10);return isNaN(n)?null:n;};
     for(const ev of (sb.events||[])){
       const when=new Date(ev.date);
@@ -359,12 +369,37 @@ async function loadEspn(){
         state:stt,completed,live,winner,placeholder,
         stage:rk?ROUNDS.find(r=>r.key===rk).name:(state.teamGroup[a]?"Group "+state.teamGroup[a]:"Group Stage"),
         detail:st.shortDetail||""});
-      if(rk && !placeholder) rounds[rk].push({id:String(ev.id),a,b,kickoff:when,winner,live});
+      if(rk) ko.push({id:String(ev.id),name:ev.name||"",round:rk,a,b,aRaw,bRaw,placeholder,kickoff:when,winner,live});
     }
-    for(const k of KO) rounds[k].sort((x,y)=>x.kickoff-y.kickoff);
     fixtures.sort((x,y)=>x.when-y.when);
-    state.rounds=rounds; state.fixtures=fixtures;
+    state.bracket=buildBracket(ko); state.fixtures=fixtures;
   }catch(e){ console.error("scoreboard",e); state.dataErr="espn"; }
+}
+
+/* Build the knockout tree from ESPN events. Ordinals come from id order within a
+   round; feeder links are parsed from placeholder names ("Round of 32 3 Winner"),
+   which is exactly how ESPN expresses the 2026 bracket. */
+function buildBracket(evs){
+  const byRound={r32:[],r16:[],qf:[],sf:[],final:[]};
+  for(const e of evs){ if(byRound[e.round]) byRound[e.round].push(e); }
+  const order={};
+  for(const rk of KO){ byRound[rk].sort((x,y)=>(""+x.id).localeCompare(""+y.id,undefined,{numeric:true})); order[rk]=byRound[rk].map(e=>e.id); }
+  const phrase={"Round of 32":"r32","Round of 16":"r16","Quarterfinal":"qf","Semifinal":"sf"};
+  const games={};
+  for(const rk of KO){
+    byRound[rk].forEach((e,i)=>{
+      let feeders=null;
+      if(rk!=="r32"){
+        feeders=[]; const re=/(Round of 32|Round of 16|Quarterfinal|Semifinal) (\d+) Winner/g; let m;
+        while((m=re.exec(e.name))){ const fid=(order[phrase[m[1]]]||[])[(+m[2])-1]; if(fid) feeders.push(fid); }
+        if(feeders.length!==2) feeders=null;
+      }
+      games[e.id]={id:e.id,round:rk,ord:i+1,feeders,a:e.a,b:e.b,aRaw:e.aRaw,bRaw:e.bRaw,
+        placeholder:e.placeholder,kickoff:e.kickoff,winner:e.winner,live:e.live};
+    });
+  }
+  const ready=order.r32.length===16 && order.r32.every(id=>!games[id].placeholder);
+  return {games,order,ready};
 }
 
 /* overrides win over ESPN.
@@ -385,9 +420,38 @@ function groupDone(L){
   const g=state.standings.find(s=>s.L===L);
   return !!(g&&g.rows.length===4&&g.rows.every(r=>r.gp>=3));
 }
-function matchWinner(rk,m){
-  const ov=state.overrides.results&&state.overrides.results[m.id];
-  return ov||m.winner||null;
+/* actual winner of a knockout game (commish override beats ESPN) */
+function koWinner(g){
+  if(!g) return null;
+  const ov=state.overrides.results&&state.overrides.results[g.id];
+  return ov||g.winner||null;
+}
+/* ---- bracket helpers ---- */
+const koPts=rk=>ROUNDS.find(r=>r.key===rk).pts;
+const finalId=()=>state.bracket.order.final[0];
+function firstKO(){ // earliest R32 kickoff
+  const ids=state.bracket.order.r32; let min=null;
+  for(const id of ids){const k=state.bracket.games[id].kickoff; if(k&&(!min||k<min))min=k;}
+  return min;
+}
+function bracketLocked(){ const f=firstKO(); return !!(f&&Date.now()>=f.getTime()); }
+function bracketOpen(){ return state.bracket.ready && !bracketLocked(); } // fillable window
+/* the two teams available to win game g, per THESE picks (r32 = real teams) */
+function slotTeams(g,bp){
+  if(!g) return [null,null];
+  if(g.round==="r32") return g.placeholder?[null,null]:[g.a,g.b];
+  return (g.feeders||[null,null]).map(fid=>bp[fid]||null);
+}
+/* clear later-round picks that are no longer reachable after an upstream change */
+function pruneBracket(bp){
+  for(const rk of ["r16","qf","sf","final"]){
+    for(const id of state.bracket.order[rk]){
+      const t=bp[id]; if(!t) continue;
+      const opts=slotTeams(state.bracket.games[id],bp);
+      if(!opts.includes(t)) delete bp[id];
+    }
+  }
+  return bp;
 }
 
 /* ================= scoring ================= */
@@ -399,9 +463,10 @@ function score(picks){
     for(let i=0;i<3;i++){ if(actual[i]&&mine[i]&&actual[i]===mine[i]) g++; }
   }
   by.group=g; total+=g;
+  const bp=picks.bracket||{};
   for(const rk of KO){
-    const pts=ROUNDS.find(r=>r.key===rk).pts; const mine=picks[rk]||{}; let s=0;
-    for(const m of state.rounds[rk]){ const w=matchWinner(rk,m); if(w&&mine[m.id]===w) s+=pts; }
+    const pts=koPts(rk); let s=0;
+    for(const id of state.bracket.order[rk]){ const w=koWinner(state.bracket.games[id]); if(w&&bp[id]===w) s+=pts; }
     by[rk]=s; total+=s;
   }
   return {total,by};
@@ -423,12 +488,12 @@ const slug=s=>(s||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,
 const $=(s,r=document)=>r.querySelector(s);
 function toast(msg,err){const t=$("#toast");t.textContent=msg;t.classList.toggle("err",!!err);t.classList.add("show");setTimeout(()=>t.classList.remove("show"),1800);}
 function esc(s){return (s+"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
-function roundStatus(rk){
+function roundStatus(rk){ // group only now; knockouts use bracketStatus()
   if(rk==="group") return Date.now()<GROUP_LOCK.getTime()?"open":"locked";
-  const ms=state.rounds[rk];
-  if(!ms.length) return "locked"; // round not open until ESPN sets its fixtures
-  return ms.some(m=>Date.now()<m.kickoff.getTime())?"open":"locked";
+  return "";
 }
+function bracketStatus(){ return !state.bracket.ready?"":(bracketOpen()?"open":"locked"); }
+const bracketRoundFilled=(rk,bp)=>state.bracket.order[rk].length>0 && state.bracket.order[rk].every(id=>bp[id]);
 
 function render(){
   if(!state.me){renderGate();return;}
@@ -458,41 +523,73 @@ function render(){
   else if(state.tab==="rules")renderRules(v); else renderCommish(v);
 }
 
-/* ---- pick ---- */
+/* ---- pick : Group Stage + Bracket ---- */
 function renderPick(v){
-  const rmeta=ROUNDS.find(r=>r.key===state.viewRound);
-  const st=roundStatus(state.viewRound);
-  const pills=`<div class="roundbar">`+ROUNDS.map(r=>{
-    const s=roundStatus(r.key);
-    return `<div class="pill ${r.key===state.viewRound?'active':''} ${s}" data-r="${r.key}"><span class="dot"></span>${r.name}</div>`;
-  }).join("")+`</div>`;
-  let body="", anyEditable=false;
-  if(state.viewRound==="group"){
-    const editable=st==="open"; anyEditable=editable;
-    body=`<div class="grid">`+Object.keys(GROUPS).map(L=>groupCard(L,editable)).join("")+`</div>`;
+  const section=state.viewRound==="bracket"?"bracket":"group";
+  const pills=`<div class="roundbar">
+    <div class="pill ${section==='group'?'active':''} ${roundStatus('group')}" data-sec="group"><span class="dot"></span>Group Stage</div>
+    <div class="pill ${section==='bracket'?'active':''} ${bracketStatus()}" data-sec="bracket"><span class="dot"></span>Bracket</div></div>`;
+  let body="", saveNote=null;
+  if(section==="group"){
+    const editable=roundStatus("group")==="open";
+    if(editable) saveNote="Tap teams in order: 1st, then 2nd, then 3rd. Tap again to remove.";
+    body=`<div class="banner"><div><h2>Group Stage</h2><p>${ROUNDS[0].hint}</p></div><div class="val">1 pt / exact position</div></div>`
+      +`<div class="grid">`+Object.keys(GROUPS).map(L=>groupCard(L,editable)).join("")+`</div>`;
   }else{
-    const ms=state.rounds[state.viewRound];
-    if(!ms.length){
-      const when=state.viewRound==="r32"?"after the group stage finishes (around Jun 28)":"once the previous round wraps";
-      body=`<div class="empty"><div class="lockbig">🔒</div><div class="big">${rmeta.name} locked</div>
-        Picks open automatically ${when}, as soon as ESPN sets the bracket. Each pick then locks at its own kickoff.</div>`;
-    }else{
-      body=ms.map(m=>{const editable=Date.now()<m.kickoff.getTime()&&!matchWinner(state.viewRound,m);
-        if(editable)anyEditable=true; return matchCard(m,editable);}).join("");
-    }
+    const r=renderBracketBody(); body=r.html; saveNote=r.saveNote;
   }
-  v.innerHTML=pills+`
-    <div class="banner"><div><h2>${rmeta.name}</h2><p>${rmeta.hint}</p></div>
-      <div class="val">${rmeta.key==='group'?'1 pt / exact position':rmeta.pts+' pt'+(rmeta.pts>1?'s':'')+' / correct pick'}</div></div>
-    ${state.dataErr?'<div class="banner"><p class="live">Live data hiccup — showing last known state. Pull to refresh or try again shortly.</p></div>':''}
-    ${body}`;
-  v.querySelectorAll(".pill").forEach(p=>p.onclick=()=>{state.viewRound=p.dataset.r;renderPick(v);});
-  if(anyEditable){
-    const note=state.viewRound==="group"
-      ?"Tap teams in order: 1st, then 2nd, then 3rd. Tap again to remove."
-      :"Tap the team you think advances. Picks lock at each kickoff.";
-    mountSaveBar(note,async()=>{ await savePicks(); });
-  }else clearSaveBar();
+  v.innerHTML=pills+(state.dataErr?'<div class="banner"><p class="live">Live data hiccup — showing last known state.</p></div>':'')+body;
+  v.querySelectorAll(".pill[data-sec]").forEach(p=>p.onclick=()=>{state.viewRound=p.dataset.sec;renderPick(v);});
+  v.querySelectorAll(".pill[data-br]").forEach(p=>p.onclick=()=>{state.bracketRound=p.dataset.br;renderPick(v);});
+  if(saveNote) mountSaveBar(saveNote,async()=>{ await savePicks(); }); else clearSaveBar();
+}
+
+function renderBracketBody(){
+  if(!state.bracket.ready){
+    return {saveNote:null,html:`<div class="banner"><div><h2>Bracket</h2><p>Predict every knockout game — Round of 32 to the Final</p></div></div>
+      <div class="empty"><div class="lockbig">🔒</div><div class="big">Bracket opens after the group stage</div>
+      Once the 32-team knockout field is set (right after groups finish, ~Jun 28), you'll fill out the entire bracket here. It locks the moment the first Round-of-32 game kicks off — picks are sealed for the whole tournament, March-Madness style.</div>`};
+  }
+  const editable=bracketOpen();
+  const bp=state.picks.bracket=state.picks.bracket||{};
+  if(editable) pruneBracket(bp);
+  const br=state.bracketRound&&state.bracket.order[state.bracketRound]?state.bracketRound:"r32";
+  const sub=`<div class="roundbar">`+KO.map(rk=>{
+    const meta=ROUNDS.find(r=>r.key===rk);
+    return `<div class="pill ${rk===br?'active':''} ${bracketRoundFilled(rk,bp)?'open':''}" data-br="${rk}"><span class="dot"></span>${meta.name}</div>`;
+  }).join("")+`</div>`;
+  const champ=bp[finalId()];
+  const champBanner=`<div class="champ ${champ?'set':''}">🏆 ${champ?`<b>${fl(champ)} ${esc(champ)}</b> <span>— your champion</span>`:`<span>Pick your champion — complete the bracket</span>`}</div>`;
+  const meta=ROUNDS.find(r=>r.key===br);
+  const ids=state.bracket.order[br];
+  const left=ids.filter(id=>!bp[id]).length;
+  const statusTxt=bracketLocked()?'locked':editable?(left?left+' to pick':'all picked ✓'):'';
+  const head=`<div class="banner"><div><h2>${meta.name}</h2><p>${meta.hint}${statusTxt?' · '+statusTxt:''}</p></div>
+    <div class="val">${meta.pts} pt${meta.pts>1?'s':''} each</div></div>`;
+  const cards=ids.map(id=>bracketCard(state.bracket.games[id],bp,editable)).join("");
+  const saveNote=editable?"Tap who advances. Your whole bracket locks when the Round of 32 kicks off.":null;
+  return {saveNote,html:sub+champBanner+head+cards};
+}
+
+const rabbr={r32:"R32",r16:"R16",qf:"QF",sf:"SF",final:"F"};
+function bracketCard(g,bp,editable){
+  const [t0,t1]=slotTeams(g,bp);
+  const pick=bp[g.id];
+  const w=koWinner(g);
+  const feederLabel=i=>{const fg=state.bracket.games[(g.feeders||[])[i]];return fg?`Winner ${rabbr[fg.round]} #${fg.ord}`:"TBD";};
+  const side=(team,which,idx)=>{
+    let cls="side "+which; const empty=!team;
+    if(w){cls+=" ro"; if(pick===team&&w===team)cls+=" correct"; else if(pick===team&&w!==team)cls+=" miss";}
+    else if(!editable){cls+=" ro"; if(pick===team)cls+=" sel";}
+    else if(pick===team){cls+=" sel";}
+    if(empty)cls+=" empty";
+    const ro=(empty||!editable||w)?'data-ro="1"':'';
+    const inner=empty?`<span class="slot">${feederLabel(idx)}</span>`:`<span class="fl">${fl(team)}</span><span class="nm">${esc(team)}</span>`;
+    return `<div class="${cls}" ${ro} data-bg="${g.id}" data-t="${empty?'':esc(team)}">${inner}</div>`;
+  };
+  const status=w?'<span class="in">✓ result in</span>':g.live?'<span class="live">● Live</span>':'';
+  return `<div class="match"><div class="mh"><span>${ROUNDS.find(r=>r.key===g.round).name} · #${g.ord}</span><span>${status}</span></div>
+    <div class="vs">${side(t0,"left",0)}<span class="mid">v</span>${side(t1,"right",1)}</div></div>`;
 }
 
 function groupCard(L,editable){
@@ -518,27 +615,6 @@ function groupCard(L,editable){
     <span class="pick-n">${label}</span></div>${rows}</div>`;
 }
 
-function matchCard(m,editable){
-  const rk=state.viewRound;
-  const pick=(state.picks[rk]||{})[m.id];
-  const w=matchWinner(rk,m);
-  const time=m.kickoff.toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
-  function side(team,which){
-    let cls="side "+which;
-    if(w){cls+=" ro";
-      if(pick===team&&w===team)cls+=" correct";
-      else if(pick===team&&w!==team)cls+=" miss";
-      else if(w===team)cls+=" correct";
-    }else if(!editable){cls+=" ro"; if(pick===team)cls+=" sel";}
-    else if(pick===team){cls+=" sel";}
-    return `<div class="${cls}" data-m="${m.id}" data-t="${esc(team)}" ${editable&&!w?'':'data-ro="1"'}>
-      <span class="fl">${fl(team)}</span><span class="nm">${esc(team)}</span></div>`;
-  }
-  const status=w?'Result in':m.live?'<span class="live">● Live</span>':editable?time:'Locked · '+time;
-  return `<div class="match"><div class="mh"><span>Match</span><span>${status}</span></div>
-    <div class="vs">${side(m.a,"left")}<span class="mid">v</span>${side(m.b,"right")}</div></div>`;
-}
-
 document.addEventListener("click",e=>{
   const team=e.target.closest(".team");
   if(team&&!team.dataset.ro&&state.tab==="pick"){
@@ -549,10 +625,13 @@ document.addEventListener("click",e=>{
     state.picks.group[L]=arr;renderPick($("#view"));
   }
   const side=e.target.closest(".side");
-  if(side&&!side.dataset.ro&&state.tab==="pick"){
-    const mid=side.dataset.m,t=side.dataset.t;
-    state.picks[state.viewRound]=state.picks[state.viewRound]||{};
-    state.picks[state.viewRound][mid]=t;renderPick($("#view"));
+  if(side&&!side.dataset.ro&&state.tab==="pick"&&side.dataset.bg){
+    if(!bracketOpen())return;
+    const gid=side.dataset.bg,t=side.dataset.t; if(!t)return;
+    state.picks.bracket=state.picks.bracket||{};
+    state.picks.bracket[gid]=t;
+    pruneBracket(state.picks.bracket);
+    renderPick($("#view"));
   }
 });
 
@@ -607,18 +686,19 @@ function playerPicksHtml(picks,reveal){
     }).join("");
   }
   html+=`<div class="pp-round"><h4>Group Stage</h4>${gBody}</div>`;
-  /* knockouts: each match reveals at its own kickoff */
-  for(const R of ROUNDS){
-    if(R.key==="group") continue;
-    const ms=state.rounds[R.key]; let body;
-    if(!ms.length){ body=`<div class="pp-hidden">Fixtures not set yet</div>`; }
-    else body=ms.map(m=>{
-      if(!reveal && Date.now()<m.kickoff.getTime())
-        return `<div class="pp-match"><span class="pp-vs">${esc(m.a)} v ${esc(m.b)}</span><span class="pp-hidden-inline">Hidden until kickoff</span></div>`;
-      const pk=(picks[R.key]||{})[m.id], w=matchWinner(R.key,m);
-      let cls="pp-pick"; if(w&&pk) cls+=pk===w?" correct":" miss";
-      return `<div class="pp-match"><span class="pp-vs">${esc(m.a)} v ${esc(m.b)}</span><span class="${cls}">${pk?fl(pk)+" "+esc(pk):"— no pick"}</span></div>`;
-    }).join("");
+  /* bracket: hidden until it locks (first R32 kickoff), then everyone's is visible */
+  const bp=picks.bracket||{};
+  const showBracket=reveal||bracketLocked();
+  for(const rk of KO){
+    const R=ROUNDS.find(r=>r.key===rk); let body;
+    if(!state.bracket.ready) body=`<div class="pp-hidden">Bracket not set yet</div>`;
+    else if(!showBracket) body=`<div class="pp-hidden">Hidden until the bracket locks</div>`;
+    else body=`<div class="pp-chips">`+state.bracket.order[rk].map(id=>{
+      const t=bp[id], w=koWinner(state.bracket.games[id]);
+      if(!t) return `<span class="pp-team empty">—</span>`;
+      let cls="pp-team"; if(w) cls+=t===w?" correct":" miss";
+      return `<span class="${cls}">${fl(t)} ${esc(t)}</span>`;
+    }).join("")+`</div>`;
     html+=`<div class="pp-round"><h4>${R.name}</h4>${body}</div>`;
   }
   return html;
@@ -714,15 +794,18 @@ function groupsView(){
 /* ---- rules ---- */
 function renderRules(v){
   v.innerHTML=`<div class="roundbar" style="padding-top:18px"></div>
-  <div class="banner"><div><h2>How it works</h2><p>Predict one round at a time — fixtures, results, and scores update automatically</p></div></div>
-  <div class="cbox"><h3>Scoring</h3>
-    <p class="sub">Knockout fixtures appear automatically once set. Each pick locks at that game's kickoff.</p>
-    <div class="crow"><span class="lbl">Group stage</span><span class="status-tag st-soon">1 pt / exact position (1st–3rd)</span></div>
+  <div class="banner"><div><h2>How it works</h2><p>Pick group placings live, then fill out the whole knockout bracket</p></div></div>
+  <div class="cbox"><h3>Group stage</h3>
+    <p class="sub">Pick 1st / 2nd / 3rd in each group — 1 pt per exact position. Scoring is live: points rise and fall with the standings table until each group is final.</p>
+    <div class="crow"><span class="lbl">Exact position (×3 / group)</span><span class="status-tag st-soon">1 pt each</span></div>
+  </div>
+  <div class="cbox"><h3>Knockout bracket</h3>
+    <p class="sub">Once the 32-team field is set, fill out the entire bracket — every game through the Final. It locks when the first Round-of-32 game kicks off; no changes after. Points double each round, so the deep rounds decide it.</p>
     <div class="crow"><span class="lbl">Round of 32</span><span class="status-tag st-soon">1 pt / correct</span></div>
     <div class="crow"><span class="lbl">Round of 16</span><span class="status-tag st-soon">2 pts / correct</span></div>
-    <div class="crow"><span class="lbl">Quarter-finals</span><span class="status-tag st-soon">3 pts / correct</span></div>
-    <div class="crow"><span class="lbl">Semi-finals</span><span class="status-tag st-soon">5 pts / correct</span></div>
-    <div class="crow"><span class="lbl">Final</span><span class="status-tag st-soon">8 pts / correct</span></div>
+    <div class="crow"><span class="lbl">Quarter-finals</span><span class="status-tag st-soon">4 pts / correct</span></div>
+    <div class="crow"><span class="lbl">Semi-finals</span><span class="status-tag st-soon">8 pts / correct</span></div>
+    <div class="crow"><span class="lbl">Final (champion)</span><span class="status-tag st-soon">16 pts</span></div>
   </div>
   <div class="cbox"><h3>Tie-breakers</h3><p class="sub">Total points → most points in the latest round → earlier rounds in turn → alphabetical.</p></div>
   <div class="cbox"><h3>Live data</h3><p class="sub">Results come from ESPN's live feed. Group placings count once all 4 teams finish their 3 games. The third-place playoff doesn't score.</p></div>`;
@@ -747,13 +830,14 @@ function renderCommish(v){
 
   let k="";
   for(const rk of KO){
-    const ms=state.rounds[rk]; if(!ms.length) continue;
+    const ids=state.bracket.order[rk].filter(id=>!state.bracket.games[id].placeholder); // real matchups only
+    if(!ids.length) continue;
     k+=`<div class="cbox"><h3>${ROUNDS.find(x=>x.key===rk).name} winner overrides</h3><p class="sub">Tap to force a winner; tap again to clear.</p>`+
-      ms.map(m=>{
-        const cur=ov.results&&ov.results[m.id];
+      ids.map(id=>{
+        const m=state.bracket.games[id]; const cur=ov.results&&ov.results[id];
         return `<div class="crow"><span class="lbl">${fl(m.a)} ${esc(m.a)} v ${esc(m.b)} ${fl(m.b)} ${m.winner?'<span class="status-tag st-open">live: '+esc(m.winner)+'</span>':''}</span><span>
-          <button class="mini ${cur===m.a?'on':''}" data-act="kres" data-m="${m.id}" data-t="${esc(m.a)}">${esc(m.a)}</button>
-          <button class="mini ${cur===m.b?'on':''}" data-act="kres" data-m="${m.id}" data-t="${esc(m.b)}">${esc(m.b)}</button></span></div>`;
+          <button class="mini ${cur===m.a?'on':''}" data-act="kres" data-m="${id}" data-t="${esc(m.a)}">${esc(m.a)}</button>
+          <button class="mini ${cur===m.b?'on':''}" data-act="kres" data-m="${id}" data-t="${esc(m.b)}">${esc(m.b)}</button></span></div>`;
       }).join("")+`</div>`;
   }
 
