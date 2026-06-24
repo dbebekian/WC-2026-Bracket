@@ -204,6 +204,30 @@
   .gtbl tr.third .pos{color:var(--gold)}
   .gtbl tr.third .tl{box-shadow:inset 3px 0 0 var(--gold);padding-left:7px}
   .gkey{text-align:center;margin:10px 0 0;color:var(--muted);font-size:12px}
+  /* bracket view toggle */
+  .seg-wrap{display:flex;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:3px;margin-bottom:10px;width:fit-content}
+  .seg{font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:12px;color:var(--muted);background:transparent;border:none;border-radius:7px;padding:7px 16px;cursor:pointer}
+  .seg.on{background:var(--surface2);color:var(--text)}
+  .bk-hint{color:var(--muted);font-size:12px;margin:0 2px 8px}
+  /* the big bracket */
+  .bk-wrap{overflow:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px;background:var(--ink);margin-bottom:12px;max-height:72vh}
+  .bk{display:flex;height:calc(var(--rows) * 58px);min-width:780px}
+  .bk-round{display:flex;flex-direction:column;flex:1 0 152px}
+  .bk-cell{flex:1;display:flex;align-items:center;justify-content:center;position:relative;padding:3px 11px}
+  .bk-game{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;z-index:1}
+  .bk-team{display:flex;align-items:center;gap:6px;padding:5px 7px;font-size:12px;cursor:pointer;border-top:1px solid var(--line);min-width:0}
+  .bk-team:first-child{border-top:none}
+  .bk-team .bn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bk-team .flag{width:20px;height:15px}
+  .bk-team:hover:not([data-ro]):not(.empty){background:var(--surface2)}
+  .bk-team.win{background:rgba(6,193,103,.16);font-weight:700}
+  .bk-team.correct{background:rgba(6,193,103,.30);font-weight:700}
+  .bk-team.miss{opacity:.45;text-decoration:line-through}
+  .bk-team.empty{color:var(--muted);font-style:italic;cursor:default;justify-content:center}
+  .bk-team[data-ro]{cursor:default}
+  /* connectors: horizontal stub out the right of each game, vertical fork joining each pair */
+  .bk-round:not(:last-child) .bk-cell::after{content:"";position:absolute;right:0;top:50%;width:11px;height:2px;background:var(--line)}
+  .bk-round:not(:first-child) .bk-cell::before{content:"";position:absolute;left:0;top:25%;height:50%;width:2px;background:var(--line)}
 </style>
 </head>
 <body>
@@ -299,7 +323,7 @@ let state={ me:null, picks:{}, players:[], overrides:{},
   standings:[],            // [{L, rows:[{team,rank,gp,w,d,l,gf,ga,gd,pts}]}]
   teamGroup:{},            // team -> group letter
   fixtures:[],             // full tournament schedule (all 104 matches)
-  tab:"pick", viewRound:"group", wcSub:"schedule", lastTotal:0, dataErr:null,
+  tab:"pick", viewRound:"group", wcSub:"schedule", bracketView:"bracket", lastTotal:0, dataErr:null,
   previewBracket:false, previewData:null, previewPicks:{} }; // commish bracket preview (in-memory)
 
 /* ================= api ================= */
@@ -564,6 +588,7 @@ function renderPick(v){
   v.innerHTML=pills+(state.dataErr?'<div class="banner"><p class="live">Live data hiccup — showing last known state.</p></div>':'')+body;
   v.querySelectorAll(".pill[data-sec]").forEach(p=>p.onclick=()=>{state.viewRound=p.dataset.sec;renderPick(v);});
   v.querySelectorAll(".pill[data-br]").forEach(p=>p.onclick=()=>{state.bracketRound=p.dataset.br;renderPick(v);});
+  v.querySelectorAll(".seg[data-bv]").forEach(b=>b.onclick=()=>{state.bracketView=b.dataset.bv;renderPick(v);});
   const ep=$("#exitPreview"); if(ep) ep.onclick=()=>{state.previewBracket=false;state.tab="commish";render();};
   if(saveNote) mountSaveBar(saveNote,async()=>{ await savePicks(); }); else clearSaveBar();
 }
@@ -579,24 +604,52 @@ function renderBracketBody(){
   const editable=preview?true:bracketOpen();
   const bp=preview?(state.previewPicks=state.previewPicks||{}):(state.picks.bracket=state.picks.bracket||{});
   if(editable) pruneBracket(bp,B);
-  const br=state.bracketRound&&B.order[state.bracketRound]&&B.order[state.bracketRound].length?state.bracketRound:"r32";
-  const filled=rk=>B.order[rk].length>0 && B.order[rk].every(id=>bp[id]);
-  const sub=`<div class="roundbar">`+KO.map(rk=>{
-    const meta=ROUNDS.find(r=>r.key===rk);
-    return `<div class="pill ${rk===br?'active':''} ${filled(rk)?'open':''}" data-br="${rk}"><span class="dot"></span>${meta.name}</div>`;
-  }).join("")+`</div>`;
+  const view=state.bracketView==="list"?"list":"bracket";
   const previewBar=preview?`<div class="champ" style="background:linear-gradient(90deg,rgba(245,185,46,.18),transparent)">🔍 <b style="color:var(--gold)">Preview</b> <span>— projected from current standings · not saved</span><button class="mini" id="exitPreview" style="margin-left:auto">Exit</button></div>`:"";
   const champ=bp[B.order.final[0]];
   const champBanner=`<div class="champ ${champ?'set':''}">🏆 ${champ?`<b>${fl(champ)} ${esc(champ)}</b> <span>— ${preview?'projected':'your'} champion</span>`:`<span>Pick your champion — complete the bracket</span>`}</div>`;
-  const meta=ROUNDS.find(r=>r.key===br);
-  const ids=B.order[br];
-  const left=ids.filter(id=>!bp[id]).length;
-  const statusTxt=(!preview&&bracketLocked())?'locked':editable?(left?left+' to pick':'all picked ✓'):'';
-  const head=`<div class="banner"><div><h2>${meta.name}</h2><p>${meta.hint}${statusTxt?' · '+statusTxt:''}</p></div>
-    <div class="val">${meta.pts} pt${meta.pts>1?'s':''} each</div></div>`;
-  const cards=ids.map(id=>bracketCard(B.games[id],bp,editable,B)).join("");
+  const toggle=`<div class="seg-wrap"><button class="seg ${view==='bracket'?'on':''}" data-bv="bracket">Bracket</button><button class="seg ${view==='list'?'on':''}" data-bv="list">List</button></div>`;
+  const total=KO.reduce((n,rk)=>n+B.order[rk].length,0), done=KO.reduce((n,rk)=>n+B.order[rk].filter(id=>bp[id]).length,0);
+  const lockTxt=(!preview&&bracketLocked())?'locked':editable?(total-done?`${total-done} of ${total} games left`:'all picked ✓'):'';
+  let mid;
+  if(view==="bracket"){
+    mid=`<p class="bk-hint">Scroll to see the whole bracket — tap a team to advance it${lockTxt?' · '+lockTxt:''}</p>`+renderBracketGraph(B,bp,editable);
+  }else{
+    const br=state.bracketRound&&B.order[state.bracketRound]&&B.order[state.bracketRound].length?state.bracketRound:"r32";
+    const filled=rk=>B.order[rk].length>0 && B.order[rk].every(id=>bp[id]);
+    const sub=`<div class="roundbar">`+KO.map(rk=>{const m=ROUNDS.find(r=>r.key===rk);
+      return `<div class="pill ${rk===br?'active':''} ${filled(rk)?'open':''}" data-br="${rk}"><span class="dot"></span>${m.name}</div>`;}).join("")+`</div>`;
+    const meta=ROUNDS.find(r=>r.key===br), ids=B.order[br], left=ids.filter(id=>!bp[id]).length;
+    const statusTxt=(!preview&&bracketLocked())?'locked':editable?(left?left+' to pick':'all picked ✓'):'';
+    const head=`<div class="banner"><div><h2>${meta.name}</h2><p>${meta.hint}${statusTxt?' · '+statusTxt:''}</p></div>
+      <div class="val">${meta.pts} pt${meta.pts>1?'s':''} each</div></div>`;
+    mid=sub+head+ids.map(id=>bracketCard(B.games[id],bp,editable,B)).join("");
+  }
   const saveNote=(!preview&&editable)?"Tap who advances. Your whole bracket locks when the Round of 32 kicks off.":null;
-  return {saveNote,html:previewBar+sub+champBanner+head+cards};
+  return {saveNote,html:previewBar+champBanner+toggle+mid};
+}
+
+/* the big visual bracket. Display order per round is a post-order DFS of the
+   tree (from the Final), which lines every game up vertically with its two
+   feeders so the nested-flex columns read as a classic bracket. */
+function renderBracketGraph(B,bp,editable){
+  const col={r32:[],r16:[],qf:[],sf:[],final:[]};
+  const dfs=id=>{const g=B.games[id];if(!g)return;if(g.feeders){dfs(g.feeders[0]);dfs(g.feeders[1]);}col[g.round].push(id);};
+  dfs(B.order.final[0]);
+  const cellHtml=id=>{
+    const g=B.games[id]; const [t0,t1]=slotTeams(g,bp); const pick=bp[id]; const w=koWinner(g);
+    const teamHtml=t=>{
+      if(!t) return `<div class="bk-team empty">—</div>`;
+      let cls="bk-team"; const picked=pick===t;
+      if(picked)cls+=" win";
+      if(w&&picked)cls+=(w===t)?" correct":" miss";
+      const ro=editable?'':'data-ro="1"';
+      return `<div class="${cls}" ${ro} data-bg="${id}" data-t="${esc(t)}"><span class="fl">${fl(t)}</span><span class="bn">${esc(t)}</span></div>`;
+    };
+    return `<div class="bk-cell"><div class="bk-game">${teamHtml(t0)}${teamHtml(t1)}</div></div>`;
+  };
+  const cols=KO.map(rk=>`<div class="bk-round">${col[rk].map(cellHtml).join("")}</div>`).join("");
+  return `<div class="bk-wrap"><div class="bk" style="--rows:${col.r32.length||16}">${cols}</div></div>`;
 }
 
 const rabbr={r32:"R32",r16:"R16",qf:"QF",sf:"SF",final:"F"};
