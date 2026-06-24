@@ -299,7 +299,8 @@ let state={ me:null, picks:{}, players:[], overrides:{},
   standings:[],            // [{L, rows:[{team,rank,gp,w,d,l,gf,ga,gd,pts}]}]
   teamGroup:{},            // team -> group letter
   fixtures:[],             // full tournament schedule (all 104 matches)
-  tab:"pick", viewRound:"group", wcSub:"schedule", lastTotal:0, dataErr:null };
+  tab:"pick", viewRound:"group", wcSub:"schedule", lastTotal:0, dataErr:null,
+  previewBracket:false, previewData:null, previewPicks:{} }; // commish bracket preview (in-memory)
 
 /* ================= api ================= */
 async function api(path,opts){ const r=await fetch(path,opts); if(!r.ok) throw new Error(path+" "+r.status); return r.json(); }
@@ -443,15 +444,37 @@ function slotTeams(g,bp){
   return (g.feeders||[null,null]).map(fid=>bp[fid]||null);
 }
 /* clear later-round picks that are no longer reachable after an upstream change */
-function pruneBracket(bp){
+function pruneBracket(bp,B){
+  B=B||state.bracket;
   for(const rk of ["r16","qf","sf","final"]){
-    for(const id of state.bracket.order[rk]){
+    for(const id of B.order[rk]){
       const t=bp[id]; if(!t) continue;
-      const opts=slotTeams(state.bracket.games[id],bp);
-      if(!opts.includes(t)) delete bp[id];
+      if(!slotTeams(B.games[id],bp).includes(t)) delete bp[id];
     }
   }
   return bp;
+}
+/* commish-only: a sandbox bracket with R32 slots filled from current standings,
+   so the bracket UI can be previewed before the field is real. Not saved. */
+function buildPreviewBracket(){
+  const real=state.bracket, games={}, stMap={}, usedThird=new Set();
+  state.standings.forEach(s=>stMap[s.L]=s.rows);
+  const resolve=raw=>{
+    let m;
+    if((m=raw.match(/Group ([A-L]) Winner/i))){const r=stMap[m[1].toUpperCase()];return r&&r[0]?r[0].team:raw;}
+    if((m=raw.match(/Group ([A-L]) 2nd/i))){const r=stMap[m[1].toUpperCase()];return r&&r[1]?r[1].team:raw;}
+    if((m=raw.match(/Third Place Group ([A-L\/]+)/i))){
+      const cand=m[1].split("/");
+      for(const L of cand){const r=stMap[L.toUpperCase()];if(r&&r[2]&&!usedThird.has(r[2].team)){usedThird.add(r[2].team);return r[2].team;}}
+      const r=stMap[cand[0].toUpperCase()];return r&&r[2]?r[2].team:("3rd "+cand.join("/"));
+    }
+    return canonical(raw); // already a literal team name
+  };
+  for(const rk of KO) for(const id of real.order[rk]){
+    const g=real.games[id];
+    games[id]=rk==="r32"?{...g,a:resolve(g.aRaw),b:resolve(g.bRaw),placeholder:false}:{...g};
+  }
+  return {games,order:real.order,ready:true};
 }
 
 /* ================= scoring ================= */
@@ -541,42 +564,48 @@ function renderPick(v){
   v.innerHTML=pills+(state.dataErr?'<div class="banner"><p class="live">Live data hiccup — showing last known state.</p></div>':'')+body;
   v.querySelectorAll(".pill[data-sec]").forEach(p=>p.onclick=()=>{state.viewRound=p.dataset.sec;renderPick(v);});
   v.querySelectorAll(".pill[data-br]").forEach(p=>p.onclick=()=>{state.bracketRound=p.dataset.br;renderPick(v);});
+  const ep=$("#exitPreview"); if(ep) ep.onclick=()=>{state.previewBracket=false;state.tab="commish";render();};
   if(saveNote) mountSaveBar(saveNote,async()=>{ await savePicks(); }); else clearSaveBar();
 }
 
 function renderBracketBody(){
-  if(!state.bracket.ready){
+  const preview=state.previewBracket;
+  if(!preview && !state.bracket.ready){
     return {saveNote:null,html:`<div class="banner"><div><h2>Bracket</h2><p>Predict every knockout game — Round of 32 to the Final</p></div></div>
       <div class="empty"><div class="lockbig">🔒</div><div class="big">Bracket opens after the group stage</div>
       Once the 32-team knockout field is set (right after groups finish, ~Jun 28), you'll fill out the entire bracket here. It locks the moment the first Round-of-32 game kicks off — picks are sealed for the whole tournament, March-Madness style.</div>`};
   }
-  const editable=bracketOpen();
-  const bp=state.picks.bracket=state.picks.bracket||{};
-  if(editable) pruneBracket(bp);
-  const br=state.bracketRound&&state.bracket.order[state.bracketRound]?state.bracketRound:"r32";
+  const B=preview?state.previewData:state.bracket;
+  const editable=preview?true:bracketOpen();
+  const bp=preview?(state.previewPicks=state.previewPicks||{}):(state.picks.bracket=state.picks.bracket||{});
+  if(editable) pruneBracket(bp,B);
+  const br=state.bracketRound&&B.order[state.bracketRound]&&B.order[state.bracketRound].length?state.bracketRound:"r32";
+  const filled=rk=>B.order[rk].length>0 && B.order[rk].every(id=>bp[id]);
   const sub=`<div class="roundbar">`+KO.map(rk=>{
     const meta=ROUNDS.find(r=>r.key===rk);
-    return `<div class="pill ${rk===br?'active':''} ${bracketRoundFilled(rk,bp)?'open':''}" data-br="${rk}"><span class="dot"></span>${meta.name}</div>`;
+    return `<div class="pill ${rk===br?'active':''} ${filled(rk)?'open':''}" data-br="${rk}"><span class="dot"></span>${meta.name}</div>`;
   }).join("")+`</div>`;
-  const champ=bp[finalId()];
-  const champBanner=`<div class="champ ${champ?'set':''}">🏆 ${champ?`<b>${fl(champ)} ${esc(champ)}</b> <span>— your champion</span>`:`<span>Pick your champion — complete the bracket</span>`}</div>`;
+  const previewBar=preview?`<div class="champ" style="background:linear-gradient(90deg,rgba(245,185,46,.18),transparent)">🔍 <b style="color:var(--gold)">Preview</b> <span>— projected from current standings · not saved</span><button class="mini" id="exitPreview" style="margin-left:auto">Exit</button></div>`:"";
+  const champ=bp[B.order.final[0]];
+  const champBanner=`<div class="champ ${champ?'set':''}">🏆 ${champ?`<b>${fl(champ)} ${esc(champ)}</b> <span>— ${preview?'projected':'your'} champion</span>`:`<span>Pick your champion — complete the bracket</span>`}</div>`;
   const meta=ROUNDS.find(r=>r.key===br);
-  const ids=state.bracket.order[br];
+  const ids=B.order[br];
   const left=ids.filter(id=>!bp[id]).length;
-  const statusTxt=bracketLocked()?'locked':editable?(left?left+' to pick':'all picked ✓'):'';
+  const statusTxt=(!preview&&bracketLocked())?'locked':editable?(left?left+' to pick':'all picked ✓'):'';
   const head=`<div class="banner"><div><h2>${meta.name}</h2><p>${meta.hint}${statusTxt?' · '+statusTxt:''}</p></div>
     <div class="val">${meta.pts} pt${meta.pts>1?'s':''} each</div></div>`;
-  const cards=ids.map(id=>bracketCard(state.bracket.games[id],bp,editable)).join("");
-  const saveNote=editable?"Tap who advances. Your whole bracket locks when the Round of 32 kicks off.":null;
-  return {saveNote,html:sub+champBanner+head+cards};
+  const cards=ids.map(id=>bracketCard(B.games[id],bp,editable,B)).join("");
+  const saveNote=(!preview&&editable)?"Tap who advances. Your whole bracket locks when the Round of 32 kicks off.":null;
+  return {saveNote,html:previewBar+sub+champBanner+head+cards};
 }
 
 const rabbr={r32:"R32",r16:"R16",qf:"QF",sf:"SF",final:"F"};
-function bracketCard(g,bp,editable){
+function bracketCard(g,bp,editable,B){
+  B=B||state.bracket;
   const [t0,t1]=slotTeams(g,bp);
   const pick=bp[g.id];
   const w=koWinner(g);
-  const feederLabel=i=>{const fg=state.bracket.games[(g.feeders||[])[i]];return fg?`Winner ${rabbr[fg.round]} #${fg.ord}`:"TBD";};
+  const feederLabel=i=>{const fg=B.games[(g.feeders||[])[i]];return fg?`Winner ${rabbr[fg.round]} #${fg.ord}`:"TBD";};
   const side=(team,which,idx)=>{
     let cls="side "+which; const empty=!team;
     if(w){cls+=" ro"; if(pick===team&&w===team)cls+=" correct"; else if(pick===team&&w!==team)cls+=" miss";}
@@ -626,11 +655,13 @@ document.addEventListener("click",e=>{
   }
   const side=e.target.closest(".side");
   if(side&&!side.dataset.ro&&state.tab==="pick"&&side.dataset.bg){
-    if(!bracketOpen())return;
-    const gid=side.dataset.bg,t=side.dataset.t; if(!t)return;
-    state.picks.bracket=state.picks.bracket||{};
-    state.picks.bracket[gid]=t;
-    pruneBracket(state.picks.bracket);
+    const preview=state.previewBracket;
+    const B=preview?state.previewData:state.bracket;
+    if(!(preview?true:bracketOpen()))return;
+    const t=side.dataset.t; if(!t)return;
+    const bp=preview?(state.previewPicks=state.previewPicks||{}):(state.picks.bracket=state.picks.bracket||{});
+    bp[side.dataset.bg]=t;
+    pruneBracket(bp,B);
     renderPick($("#view"));
   }
 });
@@ -853,13 +884,23 @@ function renderCommish(v){
   }
   pl+=`</div>`;
 
+  const prev=`<div class="cbox"><h3>Bracket preview</h3>
+    <p class="sub">Click through the whole knockout bracket now, with the 32 slots filled from the current live standings. Read-only — nothing is saved and it doesn't touch anyone's real picks.</p>
+    <button class="btn" id="previewBr">Open bracket preview</button></div>`;
+
   v.innerHTML=`<div class="roundbar" style="padding-top:18px"></div>
     <div class="banner"><div><h2>Commissioner</h2><p>Everything is automatic — this tab is your manual override</p></div></div>
     <div class="cbox"><div class="field"><label>Commish passcode (if set in Netlify)</label>
       <input type="password" id="ccode" value="${esc(localStorage.getItem("wc_code")||"")}" placeholder="optional"></div></div>
-    ${pl}${g}${k}
+    ${prev}${pl}${g}${k}
     <div class="cbox"><button class="btn gold" id="pushOv">Save overrides</button></div>`;
   clearSaveBar();
+  $("#previewBr").onclick=()=>{
+    if(!state.standings.length){toast("Standings not loaded yet",true);return;}
+    state.previewData=buildPreviewBracket(); state.previewPicks={};
+    state.previewBracket=true; state.tab="pick"; state.viewRound="bracket"; state.bracketRound="r32";
+    render();
+  };
   v.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
     const a=b.dataset.act;
     if(a==="gres"){
