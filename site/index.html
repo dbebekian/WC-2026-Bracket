@@ -147,7 +147,7 @@
   .lrow[data-pl]{cursor:pointer;transition:background .12s}
   .lrow[data-pl]:hover{background:rgba(255,255,255,.03)}
   .pp-overlay{position:fixed;inset:0;z-index:50;background:rgba(7,11,20,.72);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center}
-  .pp-card{background:var(--surface);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:560px;max-height:88vh;display:flex;flex-direction:column;animation:ppUp .22s ease}
+  .pp-card{background:var(--surface);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:720px;max-height:88vh;display:flex;flex-direction:column;animation:ppUp .22s ease}
   @keyframes ppUp{from{transform:translateY(24px);opacity:.5}to{transform:translateY(0);opacity:1}}
   @media(min-width:560px){.pp-overlay{align-items:center}.pp-card{border-radius:18px}}
   .pp-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
@@ -706,14 +706,14 @@ document.addEventListener("click",e=>{
     if(i>=0)arr.splice(i,1); else{if(arr.length>=3)arr.pop();arr.push(t);}
     state.picks.group[L]=arr;renderPick($("#view"));
   }
-  const side=e.target.closest(".side");
-  if(side&&!side.dataset.ro&&state.tab==="pick"&&side.dataset.bg){
+  const bgEl=e.target.closest("[data-bg]"); // bracket (.bk-team) or list (.side)
+  if(bgEl&&!bgEl.dataset.ro&&state.tab==="pick"){
     const preview=state.previewBracket;
     const B=preview?state.previewData:state.bracket;
     if(!(preview?true:bracketOpen()))return;
-    const t=side.dataset.t; if(!t)return;
+    const t=bgEl.dataset.t; if(!t)return;
     const bp=preview?(state.previewPicks=state.previewPicks||{}):(state.picks.bracket=state.picks.bracket||{});
-    bp[side.dataset.bg]=t;
+    bp[bgEl.dataset.bg]=t;
     pruneBracket(bp,B);
     renderPick($("#view"));
   }
@@ -770,21 +770,18 @@ function playerPicksHtml(picks,reveal){
     }).join("");
   }
   html+=`<div class="pp-round"><h4>Group Stage</h4>${gBody}</div>`;
-  /* bracket: hidden until it locks (first R32 kickoff), then everyone's is visible */
+  /* bracket in bracket form, read-only · hidden until it locks (first R32 kickoff) */
   const bp=picks.bracket||{};
   const showBracket=reveal||bracketLocked();
-  for(const rk of KO){
-    const R=ROUNDS.find(r=>r.key===rk); let body;
-    if(!state.bracket.ready) body=`<div class="pp-hidden">Bracket not set yet</div>`;
-    else if(!showBracket) body=`<div class="pp-hidden">Hidden until the bracket locks</div>`;
-    else body=`<div class="pp-chips">`+state.bracket.order[rk].map(id=>{
-      const t=bp[id], w=koWinner(state.bracket.games[id]);
-      if(!t) return `<span class="pp-team empty">—</span>`;
-      let cls="pp-team"; if(w) cls+=t===w?" correct":" miss";
-      return `<span class="${cls}">${fl(t)} ${esc(t)}</span>`;
-    }).join("")+`</div>`;
-    html+=`<div class="pp-round"><h4>${R.name}</h4>${body}</div>`;
+  let brBody;
+  if(!state.bracket.ready) brBody=`<div class="pp-hidden">Bracket not set yet</div>`;
+  else if(!showBracket) brBody=`<div class="pp-hidden">Hidden until the bracket locks</div>`;
+  else{
+    const champ=bp[state.bracket.order.final[0]];
+    brBody=`<div class="champ ${champ?'set':''}">🏆 ${champ?`<b>${fl(champ)} ${esc(champ)}</b> <span>— champion</span>`:`<span>No champion picked</span>`}</div>`
+      +renderBracketGraph(state.bracket,bp,false);
   }
+  html+=`<div class="pp-round"><h4>Knockout bracket</h4>${brBody}</div>`;
   return html;
 }
 function openPlayerPicks(plslug,reveal){
