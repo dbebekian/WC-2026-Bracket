@@ -209,13 +209,13 @@
   .seg{font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:12px;color:var(--muted);background:transparent;border:none;border-radius:7px;padding:7px 16px;cursor:pointer}
   .seg.on{background:var(--surface2);color:var(--text)}
   .bk-hint{color:var(--muted);font-size:12px;margin:0 2px 8px}
-  /* the big bracket */
-  .bk-wrap{overflow:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px;background:var(--ink);margin-bottom:12px;max-height:72vh}
-  .bk{display:flex;height:calc(var(--rows) * 58px);min-width:780px}
-  .bk-round{display:flex;flex-direction:column;flex:1 0 152px}
-  .bk-cell{flex:1;display:flex;align-items:center;justify-content:center;position:relative;padding:3px 11px}
-  .bk-game{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;z-index:1}
-  .bk-team{display:flex;align-items:center;gap:6px;padding:5px 7px;font-size:12px;cursor:pointer;border-top:1px solid var(--line);min-width:0}
+  /* the big bracket — fixed-height cells so every round lines up exactly */
+  .bk-wrap{overflow:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px;background:var(--ink);margin-bottom:12px;max-height:74vh}
+  .bk{display:flex;height:calc(var(--rows) * 64px);min-width:800px;padding:6px 6px 6px 10px}
+  .bk-round{display:flex;flex-direction:column;flex:1 1 0;min-width:150px}
+  .bk-cell{flex:1 1 0;min-height:0;display:flex;align-items:center;position:relative;padding-right:18px}
+  .bk-game{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;position:relative;z-index:1}
+  .bk-team{display:flex;align-items:center;gap:6px;height:27px;padding:0 7px;font-size:12px;cursor:pointer;border-top:1px solid var(--line);min-width:0}
   .bk-team:first-child{border-top:none}
   .bk-team .bn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .bk-team .flag{width:20px;height:15px}
@@ -225,9 +225,11 @@
   .bk-team.miss{opacity:.45;text-decoration:line-through}
   .bk-team.empty{color:var(--muted);font-style:italic;cursor:default;justify-content:center}
   .bk-team[data-ro]{cursor:default}
-  /* connectors: horizontal stub out the right of each game, vertical fork joining each pair */
-  .bk-round:not(:last-child) .bk-cell::after{content:"";position:absolute;right:0;top:50%;width:11px;height:2px;background:var(--line)}
-  .bk-round:not(:first-child) .bk-cell::before{content:"";position:absolute;left:0;top:25%;height:50%;width:2px;background:var(--line)}
+  /* connectors: each child draws a stub to the column edge + half of the vertical fork
+     (top child goes down to the pair midpoint, bottom child goes up) */
+  .bk-round:not(:last-child) .bk-cell::before{content:"";position:absolute;right:0;top:50%;width:18px;height:2px;background:var(--line)}
+  .bk-round:not(:last-child) .bk-cell:nth-child(odd)::after{content:"";position:absolute;right:0;top:50%;height:50%;width:2px;background:var(--line)}
+  .bk-round:not(:last-child) .bk-cell:nth-child(even)::after{content:"";position:absolute;right:0;bottom:50%;height:50%;width:2px;background:var(--line)}
 </style>
 </head>
 <body>
