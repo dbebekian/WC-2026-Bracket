@@ -136,6 +136,7 @@
     background:var(--surface2);color:var(--text);border-radius:8px;padding:7px 11px;cursor:pointer}
   .mini.on{background:var(--pitch);color:var(--ink);border-color:var(--pitch)}
   .mini.gold{background:var(--gold);color:var(--ink);border-color:var(--gold)}
+  .mini.del{color:var(--red);border-color:var(--red)}
   .pname{flex:1;min-width:140px;background:var(--ink);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:9px 11px;font-size:15px;font-family:var(--body)}
   .pname:focus{outline:none;border-color:var(--pitch)}
   .status-tag{font-size:11px;font-family:var(--disp);font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:6px}
@@ -1006,7 +1007,8 @@ function renderCommish(v){
         :`<span class="status-tag st-soon">not started</span>`;
       return `<div class="crow nmrow"><input class="pname" type="text" value="${esc(p.name)}" autocomplete="off">
         ${tag}<button class="mini viewBtn" data-pl="${slug(p.name)}">View</button>
-        <button class="mini gold renameBtn" data-from="${esc(p.name)}">Rename</button></div>`;
+        <button class="mini gold renameBtn" data-from="${esc(p.name)}">Rename</button>
+        <button class="mini del delBtn" data-name="${esc(p.name)}">Delete</button></div>`;
     }).join("");
   }
   pl+=`</div>`;
@@ -1065,6 +1067,18 @@ function renderCommish(v){
       await refresh();toast(`Renamed to ${to}`); // refresh() re-renders the Commish tab
     }catch(e){b.disabled=false;const s=String(e);
       toast(s.includes("403")?"Wrong passcode":s.includes("409")?"That name is already taken":s.includes("404")?"Player not found":"Rename failed",true);}
+  });
+  v.querySelectorAll(".delBtn").forEach(b=>b.onclick=async()=>{
+    const name=b.dataset.name;
+    if(!confirm(`Delete "${name}" permanently? This removes their picks and can't be undone.`))return;
+    const code=$("#ccode").value;localStorage.setItem("wc_code",code);
+    b.disabled=true;
+    try{
+      const r=await fetch("/api/pool",{method:"POST",headers:{"content-type":"application/json"},
+        body:JSON.stringify({action:"deletePlayer",code,name})});
+      if(!r.ok)throw new Error(r.status);
+      await refresh();toast(`Deleted ${name}`);
+    }catch(e){b.disabled=false;toast(String(e).includes("403")?"Wrong passcode":"Delete failed",true);}
   });
 }
 

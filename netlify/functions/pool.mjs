@@ -2,6 +2,7 @@
 // GET            → { players:[{name,picks,updatedAt}], overrides }
 // POST save      → { action:"save", name, picks }
 // POST rename    → { action:"rename", code, from, to }       (commissioner)
+// POST deletePlayer → { action:"deletePlayer", code, name }  (commissioner)
 // POST override  → { action:"override", code, overrides }    (commissioner)
 //
 // Optional: set a COMMISH_CODE env var in Netlify to require a passcode for overrides.
@@ -55,6 +56,15 @@ export default async (req) => {
       }
       await store.setJSON(toKey, { ...cur, name: to }); // keep picks + original updatedAt
       if (fromKey !== toKey) await store.delete(fromKey);
+      return json({ ok: true });
+    }
+
+    if (body.action === "deletePlayer") {
+      const code = process.env.COMMISH_CODE;
+      if (code && String(body.code || "") !== code) return json({ error: "wrong passcode" }, 403);
+      const name = String(body.name || "").trim();
+      if (!name) return json({ error: "name required" }, 400);
+      await store.delete("picks/" + slug(name));
       return json({ ok: true });
     }
 
