@@ -217,6 +217,7 @@
   .bk-round{display:flex;flex-direction:column;flex:1 1 0;min-width:140px}
   .bk-cell{flex:1 1 0;min-height:0;display:flex;align-items:center;position:relative;padding-right:18px}
   .bk-game{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;position:relative;z-index:1}
+  .bk-game.proj{border-color:var(--gold);box-shadow:0 0 0 1px rgba(245,185,46,.5)}
   .bk-team{display:flex;align-items:center;gap:6px;height:27px;padding:0 7px;font-size:12px;cursor:pointer;border-top:1px solid var(--line);min-width:0}
   .bk-team:first-child{border-top:none}
   .bk-team .bn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -401,7 +402,7 @@ async function loadEspn(){
       if(rk) ko.push({id:String(ev.id),name:ev.name||"",round:rk,a,b,aRaw,bRaw,placeholder,kickoff:when,winner,live});
     }
     fixtures.sort((x,y)=>x.when-y.when);
-    state.bracket=buildBracket(ko); state.fixtures=fixtures;
+    const B=buildBracket(ko); projectPending(B); state.bracket=B; state.fixtures=fixtures;
   }catch(e){ console.error("scoreboard",e); state.dataErr="espn"; }
 }
 
@@ -495,25 +496,41 @@ function pruneBracket(bp,B){
   }
   return bp;
 }
-/* commish-only: a sandbox bracket with R32 slots filled from current standings,
-   so the bracket UI can be previewed before the field is real. Not saved. */
+/* resolve one R32 slot label ("Group C Winner", "Group J 2nd Place",
+   "Third Place Group E/F/G/I/J") to a team from the current standings, or a
+   literal team name as-is. Returns null if it can't be resolved yet. */
+const stMapFrom=()=>{const m={};state.standings.forEach(s=>m[s.L]=s.rows);return m;};
+function resolveSlot(raw,stMap,used){
+  let m;
+  if((m=raw.match(/Group ([A-L]) Winner/i))){const r=stMap[m[1].toUpperCase()];return r&&r[0]?r[0].team:null;}
+  if((m=raw.match(/Group ([A-L]) 2nd/i))){const r=stMap[m[1].toUpperCase()];return r&&r[1]?r[1].team:null;}
+  if((m=raw.match(/Third Place Group ([A-L\/]+)/i))){
+    for(const L of m[1].split("/")){const r=stMap[L.toUpperCase()];if(r&&r[2]&&!used.has(r[2].team)){used.add(r[2].team);return r[2].team;}}
+    return null;
+  }
+  return canonical(raw); // already a real team name
+}
+/* Fill ONLY the still-pending R32 games with projected teams from the current
+   standings, so they're pickable right now. Re-runs every refresh, so a
+   projection updates as the table moves; once ESPN sets the real team it wins.
+   Projected games are flagged so the UI can mark them. */
+function projectPending(B){
+  if(B.order.r32.length!==16) return;
+  const stMap=stMapFrom(), used=new Set();
+  for(const id of B.order.r32){const g=B.games[id]; if(!g.placeholder){used.add(g.a);used.add(g.b);}}
+  for(const id of B.order.r32){
+    const g=B.games[id]; if(!g.placeholder) continue;
+    const pa=resolveSlot(g.aRaw,stMap,used), pb=resolveSlot(g.bRaw,stMap,used);
+    if(pa&&pb){ g.a=pa; g.b=pb; g.placeholder=false; g.projected=true; used.add(pa); used.add(pb); }
+  }
+}
+/* commish-only: a sandbox bracket with ALL R32 slots filled from current
+   standings, so the full bracket UI can be previewed. Not saved. */
 function buildPreviewBracket(){
-  const real=state.bracket, games={}, stMap={}, usedThird=new Set();
-  state.standings.forEach(s=>stMap[s.L]=s.rows);
-  const resolve=raw=>{
-    let m;
-    if((m=raw.match(/Group ([A-L]) Winner/i))){const r=stMap[m[1].toUpperCase()];return r&&r[0]?r[0].team:raw;}
-    if((m=raw.match(/Group ([A-L]) 2nd/i))){const r=stMap[m[1].toUpperCase()];return r&&r[1]?r[1].team:raw;}
-    if((m=raw.match(/Third Place Group ([A-L\/]+)/i))){
-      const cand=m[1].split("/");
-      for(const L of cand){const r=stMap[L.toUpperCase()];if(r&&r[2]&&!usedThird.has(r[2].team)){usedThird.add(r[2].team);return r[2].team;}}
-      const r=stMap[cand[0].toUpperCase()];return r&&r[2]?r[2].team:("3rd "+cand.join("/"));
-    }
-    return canonical(raw); // already a literal team name
-  };
+  const real=state.bracket, games={}, stMap=stMapFrom(), used=new Set();
   for(const rk of KO) for(const id of real.order[rk]){
     const g=real.games[id];
-    games[id]=rk==="r32"?{...g,a:resolve(g.aRaw),b:resolve(g.bRaw),placeholder:false}:{...g};
+    games[id]=rk==="r32"?{...g,a:resolveSlot(g.aRaw,stMap,used)||g.aRaw,b:resolveSlot(g.bRaw,stMap,used)||g.bRaw,placeholder:false}:{...g};
   }
   return {games,order:real.order,ready:true};
 }
@@ -628,8 +645,8 @@ function renderBracketBody(){
   const toggle=`<div class="seg-wrap"><button class="seg ${view==='bracket'?'on':''}" data-bv="bracket">Bracket</button><button class="seg ${view==='list'?'on':''}" data-bv="list">List</button></div>`;
   const total=KO.reduce((n,rk)=>n+B.order[rk].length,0), done=KO.reduce((n,rk)=>n+B.order[rk].filter(id=>bp[id]).length,0);
   const lockTxt=(!preview&&bracketLocked())?'locked':editable?(total-done?`${total-done} of ${total} games left`:'all picked ✓'):'';
-  const pending=!preview && r32Real()<16; // last group still finishing → a few games not set
-  const pendingNote=pending?`<p class="bk-hint" style="color:var(--gold)">A couple of games unlock once the last group finishes — pick the rest now, finish those before the Round of 32 kicks off.</p>`:"";
+  const projN=preview?0:B.order.r32.filter(id=>B.games[id].projected).length; // games filled from current standings
+  const pendingNote=projN?`<p class="bk-hint" style="color:var(--gold)">${projN} game${projN>1?'s are':' is'} projected from the current standings (gold border) — pickable now, and ${projN>1?'they':'it'}'ll update if the table moves before the group finishes.</p>`:"";
   let mid;
   if(view==="bracket"){
     mid=pendingNote+`<p class="bk-hint">Swipe sideways to move across rounds — tap a team to advance it${lockTxt?' · '+lockTxt:''}</p>`+renderBracketGraph(B,bp,editable);
@@ -665,7 +682,7 @@ function renderBracketGraph(B,bp,editable){
       const ro=editable?'':'data-ro="1"';
       return `<div class="${cls}" ${ro} data-bg="${id}" data-t="${esc(t)}"><span class="fl">${fl(t)}</span><span class="bn">${esc(t)}</span></div>`;
     };
-    return `<div class="bk-cell"><div class="bk-game">${teamHtml(t0)}${teamHtml(t1)}</div></div>`;
+    return `<div class="bk-cell"><div class="bk-game${g.projected?' proj':''}">${teamHtml(t0)}${teamHtml(t1)}</div></div>`;
   };
   const cols=KO.map(rk=>`<div class="bk-round">${col[rk].map(cellHtml).join("")}</div>`).join("");
   return `<div class="bk-wrap"><div class="bk" style="--rows:${col.r32.length||16}">${cols}</div></div>`;
