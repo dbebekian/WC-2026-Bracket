@@ -406,29 +406,45 @@ async function loadEspn(){
   }catch(e){ console.error("scoreboard",e); state.dataErr="espn"; }
 }
 
-/* Build the knockout tree from ESPN events. Ordinals come from id order within a
-   round; feeder links are parsed from placeholder names ("Round of 32 3 Winner"),
-   which is exactly how ESPN expresses the 2026 bracket. */
+/* Official 2026 match order, pinned by ESPN event id: R32 = M73–M88, R16 = M89–M96,
+   QF = M97–M100, SF = M101–M102, Final = M104. ESPN's "Round of 32 N Winner" feeder
+   labels use these official numbers, so the order arrays MUST be in this order (event
+   ids are stable for the tournament, and this is independent of which team fills a slot). */
+const OFFICIAL_ORDER={
+  r32:["760486","760489","760488","760487","760492","760490","760491","760495","760494","760493","760496","760497","760498","760500","760501","760499"],
+  r16:["760503","760502","760504","760505","760506","760507","760509","760508"],
+  qf:["760510","760511","760512","760513"],
+  sf:["760514","760515"],
+  final:["760517"]
+};
+/* Build the knockout tree from ESPN events, ordered by official match number so the
+   "Round of 32 N Winner" feeder links resolve to the right games. */
 function buildBracket(evs){
-  const byRound={r32:[],r16:[],qf:[],sf:[],final:[]};
-  for(const e of evs){ if(byRound[e.round]) byRound[e.round].push(e); }
+  const byRound={r32:[],r16:[],qf:[],sf:[],final:[]}, byId={};
+  for(const e of evs){ if(byRound[e.round]){ byRound[e.round].push(e); byId[e.id]=e; } }
   const order={};
-  for(const rk of KO){ byRound[rk].sort((x,y)=>(""+x.id).localeCompare(""+y.id,undefined,{numeric:true})); order[rk]=byRound[rk].map(e=>e.id); }
+  for(const rk of KO){
+    const present=new Set(byRound[rk].map(e=>e.id));
+    const off=(OFFICIAL_ORDER[rk]||[]).filter(id=>present.has(id));
+    const extra=byRound[rk].map(e=>e.id).filter(id=>!off.includes(id)).sort((a,b)=>(""+a).localeCompare(""+b,undefined,{numeric:true}));
+    order[rk]=off.concat(extra); // official order; any unknown ids appended by id (fallback)
+  }
   const phrase={"Round of 32":"r32","Round of 16":"r16","Quarterfinal":"qf","Semifinal":"sf"};
   const games={};
   for(const rk of KO){
-    byRound[rk].forEach((e,i)=>{
+    order[rk].forEach((id,i)=>{
+      const e=byId[id]; if(!e) return;
       let feeders=null;
       if(rk!=="r32"){
         feeders=[]; const re=/(Round of 32|Round of 16|Quarterfinal|Semifinal) (\d+) Winner/g; let m;
         while((m=re.exec(e.name))){ const fid=(order[phrase[m[1]]]||[])[(+m[2])-1]; if(fid) feeders.push(fid); }
         if(feeders.length!==2) feeders=null;
       }
-      games[e.id]={id:e.id,round:rk,ord:i+1,feeders,a:e.a,b:e.b,aRaw:e.aRaw,bRaw:e.bRaw,
+      games[id]={id,round:rk,ord:i+1,feeders,a:e.a,b:e.b,aRaw:e.aRaw,bRaw:e.bRaw,
         placeholder:e.placeholder,kickoff:e.kickoff,winner:e.winner,live:e.live};
     });
   }
-  const ready=order.r32.length===16 && order.r32.every(id=>!games[id].placeholder);
+  const ready=order.r32.length===16 && order.r32.every(id=>games[id]&&!games[id].placeholder);
   return {games,order,ready};
 }
 
