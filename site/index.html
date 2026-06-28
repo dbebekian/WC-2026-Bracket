@@ -210,9 +210,11 @@
   .seg.on{background:var(--surface2);color:var(--text)}
   .bk-hint{color:var(--muted);font-size:12px;margin:0 2px 8px}
   /* the big bracket — fixed-height cells so every round lines up exactly */
-  .bk-wrap{overflow:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px;background:var(--ink);margin-bottom:12px;max-height:74vh}
-  .bk{display:flex;height:calc(var(--rows) * 64px);min-width:800px;padding:6px 6px 6px 10px}
-  .bk-round{display:flex;flex-direction:column;flex:1 1 0;min-width:150px}
+  .bk-wrap{overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;border:1px solid var(--line);border-radius:12px;background:var(--ink);margin-bottom:12px}
+  .bk-wrap::-webkit-scrollbar{height:9px}
+  .bk-wrap::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
+  .bk{display:flex;height:calc(var(--rows) * 60px);min-width:740px;padding:6px 8px}
+  .bk-round{display:flex;flex-direction:column;flex:1 1 0;min-width:140px}
   .bk-cell{flex:1 1 0;min-height:0;display:flex;align-items:center;position:relative;padding-right:18px}
   .bk-game{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;position:relative;z-index:1}
   .bk-team{display:flex;align-items:center;gap:6px;height:27px;padding:0 7px;font-size:12px;cursor:pointer;border-top:1px solid var(--line);min-width:0}
@@ -462,7 +464,20 @@ function firstKO(){ // earliest R32 kickoff
   return min;
 }
 function bracketLocked(){ const f=firstKO(); return !!(f&&Date.now()>=f.getTime()); }
-function bracketOpen(){ return state.bracket.ready && !bracketLocked(); } // fillable window
+/* how many R32 slots have real teams */
+function r32Real(){ const r=state.bracket.order.r32; return r.filter(id=>!state.bracket.games[id].placeholder).length; }
+/* The bracket is released once the field is essentially set: all 16 real, OR most
+   of the field is real and the knockouts are imminent (so a slow last group / 3rd-
+   place slot doesn't hold up everyone). The few unresolved games stay un-pickable
+   until ESPN fills them, then become pickable automatically. */
+function bracketReady(){
+  if(state.bracket.order.r32.length!==16) return false;
+  const real=r32Real();
+  if(real===16) return true;
+  const f=firstKO();
+  return real>=10 && !!f && (f.getTime()-Date.now()) < 60*3600*1000;
+}
+function bracketOpen(){ return bracketReady() && !bracketLocked(); } // fillable window
 /* the two teams available to win game g, per THESE picks (r32 = real teams) */
 function slotTeams(g,bp){
   if(!g) return [null,null];
@@ -541,7 +556,7 @@ function roundStatus(rk){ // group only now; knockouts use bracketStatus()
   if(rk==="group") return Date.now()<GROUP_LOCK.getTime()?"open":"locked";
   return "";
 }
-function bracketStatus(){ return !state.bracket.ready?"":(bracketOpen()?"open":"locked"); }
+function bracketStatus(){ return !bracketReady()?"":(bracketOpen()?"open":"locked"); }
 const bracketRoundFilled=(rk,bp)=>state.bracket.order[rk].length>0 && state.bracket.order[rk].every(id=>bp[id]);
 
 function render(){
@@ -597,7 +612,7 @@ function renderPick(v){
 
 function renderBracketBody(){
   const preview=state.previewBracket;
-  if(!preview && !state.bracket.ready){
+  if(!preview && !bracketReady()){
     return {saveNote:null,html:`<div class="banner"><div><h2>Bracket</h2><p>Predict every knockout game — Round of 32 to the Final</p></div></div>
       <div class="empty"><div class="lockbig">🔒</div><div class="big">Bracket opens after the group stage</div>
       Once the 32-team knockout field is set (right after groups finish, ~Jun 28), you'll fill out the entire bracket here. It locks the moment the first Round-of-32 game kicks off — picks are sealed for the whole tournament, March-Madness style.</div>`};
@@ -613,9 +628,11 @@ function renderBracketBody(){
   const toggle=`<div class="seg-wrap"><button class="seg ${view==='bracket'?'on':''}" data-bv="bracket">Bracket</button><button class="seg ${view==='list'?'on':''}" data-bv="list">List</button></div>`;
   const total=KO.reduce((n,rk)=>n+B.order[rk].length,0), done=KO.reduce((n,rk)=>n+B.order[rk].filter(id=>bp[id]).length,0);
   const lockTxt=(!preview&&bracketLocked())?'locked':editable?(total-done?`${total-done} of ${total} games left`:'all picked ✓'):'';
+  const pending=!preview && r32Real()<16; // last group still finishing → a few games not set
+  const pendingNote=pending?`<p class="bk-hint" style="color:var(--gold)">A couple of games unlock once the last group finishes — pick the rest now, finish those before the Round of 32 kicks off.</p>`:"";
   let mid;
   if(view==="bracket"){
-    mid=`<p class="bk-hint">Scroll to see the whole bracket — tap a team to advance it${lockTxt?' · '+lockTxt:''}</p>`+renderBracketGraph(B,bp,editable);
+    mid=pendingNote+`<p class="bk-hint">Swipe sideways to move across rounds — tap a team to advance it${lockTxt?' · '+lockTxt:''}</p>`+renderBracketGraph(B,bp,editable);
   }else{
     const br=state.bracketRound&&B.order[state.bracketRound]&&B.order[state.bracketRound].length?state.bracketRound:"r32";
     const filled=rk=>B.order[rk].length>0 && B.order[rk].every(id=>bp[id]);
@@ -627,7 +644,7 @@ function renderBracketBody(){
       <div class="val">${meta.pts} pt${meta.pts>1?'s':''} each</div></div>`;
     mid=sub+head+ids.map(id=>bracketCard(B.games[id],bp,editable,B)).join("");
   }
-  const saveNote=(!preview&&editable)?"Tap who advances. Your whole bracket locks when the Round of 32 kicks off.":null;
+  const saveNote=(!preview&&editable)?"Tap who advances · auto-saves as you go · locks at the first Round-of-32 kickoff":null;
   return {saveNote,html:previewBar+champBanner+toggle+mid};
 }
 
@@ -706,7 +723,7 @@ document.addEventListener("click",e=>{
     state.picks.group=state.picks.group||{};const arr=state.picks.group[L]||[];
     const i=arr.indexOf(t);
     if(i>=0)arr.splice(i,1); else{if(arr.length>=3)arr.pop();arr.push(t);}
-    state.picks.group[L]=arr;renderPick($("#view"));
+    state.picks.group[L]=arr;queueAutoSave();renderPick($("#view"));
   }
   const bgEl=e.target.closest("[data-bg]"); // bracket (.bk-team) or list (.side)
   if(bgEl&&!bgEl.dataset.ro&&state.tab==="pick"){
@@ -717,6 +734,7 @@ document.addEventListener("click",e=>{
     const bp=preview?(state.previewPicks=state.previewPicks||{}):(state.picks.bracket=state.picks.bracket||{});
     bp[bgEl.dataset.bg]=t;
     pruneBracket(bp,B);
+    if(!preview) queueAutoSave();
     renderPick($("#view"));
   }
 });
@@ -728,6 +746,22 @@ async function savePicks(){
     if(!r.ok)throw new Error("save "+r.status);
     await refresh(); toast("Picks saved");
   }catch(e){console.error(e);toast("Save failed — try again",true);}
+}
+/* background safety-net save: fires ~1.2s after the last pick so a forgotten
+   "Save" tap never loses a bracket. Quiet — no refresh, no toast spam. */
+let _autoSaveTimer=null;
+function queueAutoSave(){
+  if(!state.me) return;
+  clearTimeout(_autoSaveTimer);
+  _autoSaveTimer=setTimeout(saveQuiet,1200);
+}
+async function saveQuiet(){
+  try{
+    const r=await fetch("/api/pool",{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({action:"save",name:state.me.name,picks:state.picks})});
+    if(!r.ok)throw new Error("save "+r.status);
+    const bar=$("#savebar .note"); if(bar){bar.textContent="Saved ✓ — your picks are recorded";}
+  }catch(e){ console.error("autosave",e); const bar=$("#savebar .note"); if(bar) bar.textContent="Couldn't auto-save — tap Save"; }
 }
 
 /* ---- table ---- */
@@ -776,7 +810,7 @@ function playerPicksHtml(picks,reveal){
   const bp=picks.bracket||{};
   const showBracket=reveal||bracketLocked();
   let brBody;
-  if(!state.bracket.ready) brBody=`<div class="pp-hidden">Bracket not set yet</div>`;
+  if(!bracketReady()) brBody=`<div class="pp-hidden">Bracket not set yet</div>`;
   else if(!showBracket) brBody=`<div class="pp-hidden">Hidden until the bracket locks</div>`;
   else{
     const champ=bp[state.bracket.order.final[0]];
