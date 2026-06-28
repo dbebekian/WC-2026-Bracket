@@ -991,15 +991,23 @@ function renderCommish(v){
       }).join("")+`</div>`;
   }
 
-  let pl=`<div class="cbox"><h3>Players</h3>
-    <p class="sub">Edit a player's name — e.g. add a last name to someone who only entered a first name. Renaming moves their picks and score to the new name.</p>`;
+  const koTotal=KO.reduce((n,rk)=>n+state.bracket.order[rk].length,0)||31, fId=finalId();
+  const bstat=p=>{const b=(p.picks&&p.picks.bracket)||{};const n=Object.keys(b).length;return {n,done:n>=koTotal,champ:fId&&b[fId]};};
+  const doneN=state.players.filter(p=>bstat(p).done).length, startN=state.players.filter(p=>bstat(p).n>0).length;
+  let pl=`<div class="cbox"><h3>Players &amp; brackets</h3>
+    <p class="sub"><b style="color:var(--pitch)">${doneN}</b> of ${state.players.length} brackets submitted (all ${koTotal} picks) · ${startN} started · ${state.players.length-startN} not started. Tap a name's status to view their bracket.</p>`;
   if(!state.players.length){
     pl+=`<p class="sub" style="margin:0">No players have joined yet.</p>`;
   }else{
-    pl+=state.players.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>
-      `<div class="crow nmrow"><input class="pname" type="text" value="${esc(p.name)}" autocomplete="off">
-        <button class="mini viewBtn" data-pl="${slug(p.name)}">View picks</button>
-        <button class="mini gold renameBtn" data-from="${esc(p.name)}">Rename</button></div>`).join("");
+    pl+=state.players.slice().sort((a,b)=>{const A=bstat(a),B=bstat(b);return B.n-A.n||a.name.localeCompare(b.name);}).map(p=>{
+      const s=bstat(p);
+      const tag=s.done?`<span class="status-tag st-locked">✓ ${koTotal}/${koTotal}${s.champ?' · 🏆 '+esc(s.champ):''}</span>`
+        :s.n>0?`<span class="status-tag st-open">${s.n}/${koTotal}</span>`
+        :`<span class="status-tag st-soon">not started</span>`;
+      return `<div class="crow nmrow"><input class="pname" type="text" value="${esc(p.name)}" autocomplete="off">
+        ${tag}<button class="mini viewBtn" data-pl="${slug(p.name)}">View</button>
+        <button class="mini gold renameBtn" data-from="${esc(p.name)}">Rename</button></div>`;
+    }).join("");
   }
   pl+=`</div>`;
 
