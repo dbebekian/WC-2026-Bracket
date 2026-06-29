@@ -221,12 +221,13 @@
   .bk-game.proj{border-color:var(--gold);box-shadow:0 0 0 1px rgba(245,185,46,.5)}
   .bk-team{display:flex;align-items:center;gap:6px;height:27px;padding:0 7px;font-size:12px;cursor:pointer;border-top:1px solid var(--line);min-width:0}
   .bk-team:first-child{border-top:none}
-  .bk-team .bn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .bk-team .flag{width:20px;height:15px}
+  .bk-team .bn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bk-team .flag{width:20px;height:15px;flex:0 0 auto}
+  .bk-ck{flex:0 0 auto;color:var(--pitch);font-weight:800;font-size:13px}
   .bk-team:hover:not([data-ro]):not(.empty){background:var(--surface2)}
   .bk-team.win{background:rgba(6,193,103,.16);font-weight:700}
   .bk-team.correct{background:rgba(6,193,103,.30);font-weight:700}
-  .bk-team.miss{opacity:.45;text-decoration:line-through}
+  .bk-team.miss{opacity:.5;text-decoration:line-through;text-decoration-color:var(--red);text-decoration-thickness:2px}
   .bk-team.empty{color:var(--muted);font-style:italic;cursor:default;justify-content:center}
   .bk-team[data-ro]{cursor:default}
   /* connectors: each child draws a stub to the column edge + half of the vertical fork
@@ -703,15 +704,23 @@ function renderBracketGraph(B,bp,editable){
   const col={r32:[],r16:[],qf:[],sf:[],final:[]};
   const dfs=id=>{const g=B.games[id];if(!g)return;if(g.feeders){dfs(g.feeders[0]);dfs(g.feeders[1]);}col[g.round].push(id);};
   dfs(B.order.final[0]);
+  /* teams that have actually been knocked out (lost a completed KO game) — used to
+     strike a wrong pick through the WHOLE bracket, not just where it lost */
+  const elim=new Set();
+  for(const id in B.games){const g=B.games[id],w=koWinner(g);
+    if(w&&!g.placeholder&&g.a&&g.b){const L=g.a===w?g.b:(g.b===w?g.a:null);if(L)elim.add(L);}}
   const cellHtml=id=>{
     const g=B.games[id]; const [t0,t1]=slotTeams(g,bp); const pick=bp[id]; const w=koWinner(g);
     const teamHtml=t=>{
       if(!t) return `<div class="bk-team empty">—</div>`;
-      let cls="bk-team"; const picked=pick===t;
-      if(picked)cls+=" win";
-      if(w&&picked)cls+=(w===t)?" correct":" miss";
+      let cls="bk-team", mark=""; const picked=pick===t;
+      if(picked){
+        cls+=" win";
+        if(w&&w===t){ cls+=" correct"; mark='<span class="bk-ck">✓</span>'; } // your pick won this game
+        else if(elim.has(t)){ cls+=" miss"; }                                 // your pick is out → strike, all the way down
+      }
       const ro=editable?'':'data-ro="1"';
-      return `<div class="${cls}" ${ro} data-bg="${id}" data-t="${esc(t)}"><span class="fl">${fl(t)}</span><span class="bn">${esc(t)}</span></div>`;
+      return `<div class="${cls}" ${ro} data-bg="${id}" data-t="${esc(t)}"><span class="fl">${fl(t)}</span><span class="bn">${esc(t)}</span>${mark}</div>`;
     };
     return `<div class="bk-cell"><div class="bk-game${g.projected?' proj':''}">${teamHtml(t0)}${teamHtml(t1)}</div></div>`;
   };
