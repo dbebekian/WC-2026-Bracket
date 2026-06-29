@@ -481,7 +481,13 @@ function firstKO(){ // earliest R32 kickoff
   for(const id of ids){const k=state.bracket.games[id].kickoff; if(k&&(!min||k<min))min=k;}
   return min;
 }
-function bracketLocked(){ const f=firstKO(); return !!(f&&Date.now()>=f.getTime()); }
+/* Temporary commish reopen: bracket editing is unlocked until this time (so a
+   latecomer could finish on Jun 29). Once it passes, the normal lock resumes. */
+const REOPEN_UNTIL=new Date("2026-06-29T17:00:00Z"); // 10:00 AM PT, Jun 29
+function bracketLocked(){
+  if(Date.now()<REOPEN_UNTIL.getTime()) return false; // reopened window
+  const f=firstKO(); return !!(f&&Date.now()>=f.getTime());
+}
 /* how many R32 slots have real teams */
 function r32Real(){ const r=state.bracket.order.r32; return r.filter(id=>!state.bracket.games[id].placeholder).length; }
 /* The bracket is released once the field is essentially set: all 16 real, OR most
@@ -663,7 +669,8 @@ function renderBracketBody(){
   const total=KO.reduce((n,rk)=>n+B.order[rk].length,0), done=KO.reduce((n,rk)=>n+B.order[rk].filter(id=>bp[id]).length,0);
   const lockTxt=(!preview&&bracketLocked())?'locked':editable?(total-done?`${total-done} of ${total} games left`:'all picked ✓'):'';
   const projN=preview?0:B.order.r32.filter(id=>B.games[id].projected).length; // games filled from current standings
-  const pendingNote=projN?`<p class="bk-hint" style="color:var(--gold)">${projN} game${projN>1?'s are':' is'} projected from the current standings (gold border) — pickable now, and ${projN>1?'they':'it'}'ll update if the table moves before the group finishes.</p>`:"";
+  const reopenNote=(!preview&&editable&&Date.now()<REOPEN_UNTIL.getTime())?`<p class="bk-hint" style="color:var(--gold)">⏰ Bracket reopened until 10:00 AM PT today — finish and it auto-saves. Locks again right after.</p>`:"";
+  const pendingNote=reopenNote+(projN?`<p class="bk-hint" style="color:var(--gold)">${projN} game${projN>1?'s are':' is'} projected from the current standings (gold border) — pickable now, and ${projN>1?'they':'it'}'ll update if the table moves before the group finishes.</p>`:"");
   let mid;
   if(view==="bracket"){
     mid=pendingNote+`<p class="bk-hint">Swipe sideways to move across rounds — tap a team to advance it${lockTxt?' · '+lockTxt:''}</p>`+renderBracketGraph(B,bp,editable);
